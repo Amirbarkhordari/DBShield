@@ -10,13 +10,16 @@ Follows linux-cli-design-system standards:
 import os
 import platform
 import sys
+from pathlib import Path
 
 import typer
 
 from dbshield import __author__, __version__
 from dbshield.config import get_settings
+from dbshield.discovery.engine import DiscoveryEngine
 from dbshield.exceptions import DBShieldError, ScopeViolationError, URLValidationError
 from dbshield.logging_config import configure_logging
+from dbshield.models.discovery import DiscoveryResult, DiscoveryStatus
 from dbshield.models.target import Target
 from dbshield.scope.manager import ScopeManager
 
@@ -273,6 +276,245 @@ def info_cmd() -> None:
     ]
     sys.stdout.write("\n".join(output_lines) + "\n")
     sys.stdout.flush()
+    raise typer.Exit(code=0)
+
+
+def _format_discovery_report(result: DiscoveryResult) -> str:
+    """Format discovery results into a structured terminal presentation."""
+    status_display = result.status.value.upper()
+    classification_display = result.page_classification.value.upper()
+
+    lines = [
+        "",
+        "=" * 80,
+        "                         LOGIN PAGE DISCOVERY REPORT                            ",
+        "=" * 80,
+        f"  Target URL:             {result.target_url}",
+        f"  Final Resolved URL:     {result.final_url or '(unresolved)'}",
+        f"  HTTP Response:          {result.http_status_code or 'N/A'} ({result.content_type or 'unknown'})",
+        f"  Page Title:             {result.page_title or '(no title tag)'}",
+        f"  Discovery Status:       {status_display}",
+        f"  Page Classification:    {classification_display}",
+    ]
+    if result.page_query_params:
+        lines.append(f"  Page Query Params:      {', '.join(result.page_query_params)}")
+
+    lines.extend(
+        [
+            "-" * 80,
+            "  Discovery Inventory & Summary Metrics:",
+            f"    Total Forms Discovered:            {result.summary.total_forms}",
+            f"    Candidate Authentication Forms:    {result.summary.login_forms}",
+            f"    Interactive Candidate Fields:      {result.summary.candidate_fields}",
+            f"    Hidden / Anti-CSRF Fields:         {result.summary.hidden_fields}",
+            f"    Username / Email Fields:           {result.summary.username_fields}",
+            f"    Password Fields:                   {result.summary.password_fields}",
+            f"    Anti-CSRF / Verification Tokens:   {result.summary.csrf_fields}",
+            f"    Action URLs In-Scope:              {result.summary.action_urls_in_scope}",
+            f"    Action URLs Out-of-Scope:          {result.summary.action_urls_out_of_scope}",
+        ]
+    )
+
+    if result.page_evidence:
+        lines.extend(
+            [
+                "-" * 80,
+                "  Page Classification Evidence:",
+            ]
+        )
+        for ev in result.page_evidence:
+            lines.append(f"    * {ev}")
+
+    if result.forms:
+        lines.extend(
+            [
+                "-" * 80,
+                "  Discovered HTML Forms:",
+            ]
+        )
+        for idx, form in enumerate(result.forms, start=1):
+            auth_badge = "[LOGIN CANDIDATE]" if form.is_login_candidate else "[NON-LOGIN]"
+            scope_badge = "IN-SCOPE" if form.is_action_in_scope else "OUT-OF-SCOPE"
+            lines.extend(
+                [
+                    f"    Form #{idx}: '{form.form_id}' {auth_badge}",
+                    f"      Method:           {form.method}",
+                    f"      Declared Action:  {form.declared_action or '(omitted - defaults to page URL)'}",
+                    f"      Resolved Action:  {form.resolved_action} [{scope_badge}]",
+                    f"      Encoding Type:    {form.enctype}",
+                    f"      Same-Origin:      {form.is_same_origin}",
+                    f"      Controls ({len(form.controls)}):",
+                ]
+            )
+            for ctrl in form.controls:
+                name_str = f"name='{ctrl.name}'" if ctrl.name else "(unnamed)"
+                id_str = f" id='{ctrl.id_attr}'" if ctrl.id_attr else ""
+                req_str = " [required]" if ctrl.required else ""
+                lines.append(
+                    f"        - <{ctrl.element_type}> {name_str}{id_str} type='{ctrl.input_type}' "
+                    f"-> {ctrl.classification.value.upper()} (conf: {ctrl.confidence:.2f}){req_str}"
+                )
+            if form.evidence:
+                lines.append("      Form Evidence:")
+                for ev in form.evidence:
+                    lines.append(f"        * {ev}")
+
+    if result.orphan_inputs:
+        lines.extend(
+            [
+                "-" * 80,
+                f"  Formless / Orphan Controls Outside Forms ({len(result.orphan_inputs)}):",
+            ]
+        )
+        for ctrl in result.orphan_inputs:
+            name_str = f"name='{ctrl.name}'" if ctrl.name else "(unnamed)"
+            lines.append(
+                f"    - <{ctrl.element_type}> {name_str} type='{ctrl.input_type}' "
+                f"-> {ctrl.classification.value.upper()} (conf: {ctrl.confidence:.2f})"
+            )
+
+    lines.extend(
+        [
+            "=" * 80,
+            "  SECURITY NOTE: Discovered inputs are candidate points for database security  ",
+            "  testing; DBShield has NOT submitted credentials nor confirmed vulnerabilities.",
+            "=" * 80,
+        ]
+    )
+    return "\n".join(lines)
+
+
+@app.command(name="discover")
+def discover_cmd(
+    url: str = typer.Option(
+        ...,
+        "--url",
+        "-u",
+        help="Target login page URL to discover and analyze.",
+    ),
+    format_opt: str = typer.Option(
+        "text",
+        "--format",
+        "-f",
+        help="Output format: 'text' (human-readable summary) or 'json' (machine-readable data).",
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="File path to save the discovery results.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Overwrite existing output file if it already exists.",
+    ),
+    timeout: float | None = typer.Option(
+        None,
+        "--timeout",
+        "-t",
+        help="HTTP timeout budget in seconds (overrides configuration).",
+    ),
+) -> None:
+    """Retrieve and analyze an authorized login page to identify forms and input controls."""
+    fmt = format_opt.strip().lower()
+    if fmt not in {"text", "json"}:
+        print_error(
+            f"Unsupported output format: '{format_opt}'.",
+            cause=f"Format must be 'text' or 'json', received '{format_opt}'.",
+            remedy="Specify --format text or --format json.",
+        )
+        raise typer.Exit(code=2)
+
+    # 1. Target Validation
+    try:
+        target = Target.from_url(url)
+    except URLValidationError as exc:
+        print_error(exc.message, cause=exc.cause, remedy=exc.remedy)
+        raise typer.Exit(code=2) from exc
+
+    # 2. Scope Manager & Authorization Pre-flight Check
+    try:
+        settings = get_settings()
+        scope_manager = ScopeManager(
+            allowed_hosts=settings.allowed_hosts,
+            allow_subdomains=settings.allow_subdomains,
+            strict_mode=bool(settings.allowed_hosts),
+        )
+    except Exception as exc:
+        print_error("Failed to load configuration.", cause=str(exc))
+        raise typer.Exit(code=1) from exc
+
+    if not scope_manager.is_url_in_scope(target):
+        print_error(
+            f"Target URL '{target.full_url}' is outside authorized scope.",
+            cause=f"Host '{target.host}' is not listed in allowed_hosts ({settings.allowed_hosts}).",
+            remedy="Update DBSHIELD_ALLOWED_HOSTS in your environment or .env file before scanning.",
+        )
+        raise typer.Exit(code=2)
+
+    if fmt == "text":
+        print_info(f"Initiating login page discovery against '{target.full_url}'...")
+
+    # 3. Execute Discovery Engine
+    effective_timeout = timeout if timeout is not None else settings.http_timeout
+    engine = DiscoveryEngine(
+        scope_manager=scope_manager,
+        timeout=effective_timeout,
+        max_redirects=settings.max_redirects,
+        user_agent=settings.user_agent,
+    )
+    with engine:
+        result = engine.discover(target)
+
+    # 4. Handle Output Export
+    rendered_text = _format_discovery_report(result)
+    json_output = result.model_dump_json(indent=2)
+
+    if output is not None:
+        out_path = Path(output)
+        if out_path.exists() and not overwrite:
+            print_error(
+                f"Output destination '{output}' already exists.",
+                cause="Target file exists and --overwrite was not specified.",
+                remedy="Provide a different output path or specify --overwrite to replace it.",
+            )
+            raise typer.Exit(code=1)
+
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            if fmt == "json" or out_path.suffix.lower() == ".json":
+                out_path.write_text(json_output, encoding="utf-8")
+            else:
+                out_path.write_text(rendered_text, encoding="utf-8")
+            print_success(f"Discovery results successfully exported to '{out_path}'.")
+        except Exception as exc:
+            print_error(
+                f"Failed to write discovery results to '{out_path}'.",
+                cause=str(exc),
+                remedy="Verify write permissions and disk space for destination path.",
+            )
+            raise typer.Exit(code=1) from exc
+
+    # 5. Render Output to Terminal
+    if fmt == "json":
+        sys.stdout.write(json_output + "\n")
+    else:
+        sys.stdout.write(rendered_text + "\n")
+    sys.stdout.flush()
+
+    # 6. Report Warnings and Errors to stderr
+    for warning in result.warnings:
+        print_warning(warning)
+    for err in result.errors:
+        print_error(err)
+
+    # 7. Exit Code Discipline
+    if result.status == DiscoveryStatus.BLOCKED_BY_SCOPE:
+        raise typer.Exit(code=2)
+    if result.status == DiscoveryStatus.FAILED:
+        raise typer.Exit(code=1)
+
     raise typer.Exit(code=0)
 
 
