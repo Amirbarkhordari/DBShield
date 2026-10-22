@@ -7,19 +7,32 @@ Follows linux-cli-design-system standards:
 - Respects NO_COLOR
 """
 
+import json
 import os
 import platform
 import sys
 from pathlib import Path
+from typing import Any
 
 import typer
 
 from dbshield import __author__, __version__
+from dbshield.auth.manager import SessionManager
 from dbshield.config import get_settings
 from dbshield.discovery.engine import DiscoveryEngine
-from dbshield.exceptions import DBShieldError, ScopeViolationError, URLValidationError
+from dbshield.exceptions import (
+    AuthenticationError,
+    DBShieldError,
+    HTTPClientError,
+    NetworkError,
+    ScopeViolationError,
+    URLValidationError,
+)
+from dbshield.http.client import SafeHTTPClient
 from dbshield.logging_config import configure_logging
+from dbshield.models.auth import AuthConfig, AuthType
 from dbshield.models.discovery import DiscoveryResult, DiscoveryStatus
+from dbshield.models.http import HTTPMethod, HTTPResponse
 from dbshield.models.target import Target
 from dbshield.scope.manager import ScopeManager
 
@@ -514,6 +527,407 @@ def discover_cmd(
         raise typer.Exit(code=2)
     if result.status == DiscoveryStatus.FAILED:
         raise typer.Exit(code=1)
+
+
+def _format_request_report(
+    response: HTTPResponse,
+    session_manager: SessionManager,
+    auth_config: AuthConfig,
+) -> str:
+    """Format structured HTTP response and session status for human-readable terminal output."""
+    status_phrase = {
+        200: "OK",
+        201: "Created",
+        204: "No Content",
+        301: "Moved Permanently",
+        302: "Found",
+        303: "See Other",
+        304: "Not Modified",
+        307: "Temporary Redirect",
+        308: "Permanent Redirect",
+        400: "Bad Request",
+        401: "Unauthorized",
+        403: "Forbidden",
+        404: "Not Found",
+        405: "Method Not Allowed",
+        500: "Internal Server Error",
+        502: "Bad Gateway",
+        503: "Service Unavailable",
+    }.get(response.status_code, "HTTP Response")
+
+    redirect_info = (
+        f"{len(response.redirect_history)} hop(s) -> {', '.join(response.redirect_history)}"
+        if response.redirect_history
+        else "None (0 hops)"
+    )
+
+    lines = [
+        "=" * 80,
+        "DBShield HTTP Request Report",
+        "=" * 80,
+        f"Target URL       : {response.url}",
+        f"Request Method   : {response.request_method}",
+        f"HTTP Status      : {response.status_code} ({status_phrase})",
+        f"Elapsed Time     : {response.elapsed_seconds:.4f}s",
+        f"Auth Configured  : {auth_config.auth_type.value.upper()}",
+        f"Session State    : {session_manager.state.value.upper()}",
+        f"Redirect History : {redirect_info}",
+        f"Content-Type     : {response.content_type or 'None'}",
+        f"Content-Length   : {response.content_length} bytes",
+        f"Truncated        : {response.truncated}",
+        "-" * 80,
+        "Response Headers",
+        "-" * 80,
+    ]
+    for k, v in response.headers.items():
+        masked_val = "[REDACTED]" if k.lower() in {"authorization", "set-cookie"} else v
+        lines.append(f"{k}: {masked_val}")
+
+    lines.extend(
+        [
+            "-" * 80,
+            "Response Body Preview",
+            "-" * 80,
+        ]
+    )
+    snippet = response.body[:500] if len(response.body) > 500 else response.body
+    if not snippet:
+        lines.append("(empty body)")
+    else:
+        lines.append(snippet)
+        if len(response.body) > 500:
+            lines.append(f"... [Truncated {len(response.body) - 500} bytes in preview]")
+
+    lines.extend(
+        [
+            "=" * 80,
+            "NOTICE: This HTTP request was performed passively for operational",
+            "  verification; DBShield has NOT executed injection payloads.",
+            "=" * 80,
+        ]
+    )
+    return "\n".join(lines)
+
+
+@app.command(name="request")
+def request_cmd(
+    url: str = typer.Option(
+        ...,
+        "--url",
+        "-u",
+        help="Target URL endpoint to send HTTP request to.",
+    ),
+    method: str = typer.Option(
+        "GET",
+        "--method",
+        "-m",
+        help="HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS).",
+    ),
+    headers: list[str] | None = typer.Option(
+        None,
+        "--header",
+        "-H",
+        help="Custom HTTP header in 'Name: Value' format (repeatable).",
+    ),
+    data: str | None = typer.Option(
+        None,
+        "--data",
+        "-d",
+        help="Form or raw text request body.",
+    ),
+    json_data: str | None = typer.Option(
+        None,
+        "--json",
+        "-j",
+        help="Raw JSON request body string.",
+    ),
+    auth_type: str = typer.Option(
+        "none",
+        "--auth-type",
+        "-a",
+        help="Authentication type: 'none', 'bearer', 'basic', 'header', 'cookie'.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        help="Bearer authentication token (can also be read from DBSHIELD_AUTH_TOKEN).",
+    ),
+    username: str | None = typer.Option(
+        None,
+        "--username",
+        "-U",
+        help="Basic authentication username (can also be read from DBSHIELD_AUTH_USERNAME).",
+    ),
+    password: str | None = typer.Option(
+        None,
+        "--password",
+        "-P",
+        help="Basic authentication password (can also be read from DBSHIELD_AUTH_PASSWORD).",
+    ),
+    cookies: list[str] | None = typer.Option(
+        None,
+        "--cookie",
+        "-C",
+        help="Session cookie in 'name=value' format (repeatable).",
+    ),
+    timeout: float | None = typer.Option(
+        None,
+        "--timeout",
+        "-t",
+        help="HTTP timeout budget in seconds (overrides configuration).",
+    ),
+    follow_redirects: bool = typer.Option(
+        True,
+        "--follow-redirects/--no-follow-redirects",
+        help="Whether to follow in-scope redirects.",
+    ),
+    max_redirects: int | None = typer.Option(
+        None,
+        "--max-redirects",
+        help="Maximum redirect hops allowed (overrides configuration).",
+    ),
+    format_opt: str = typer.Option(
+        "text",
+        "--format",
+        "-f",
+        help="Output format: 'text' (human-readable summary) or 'json' (machine-readable data).",
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="File path to save the request output.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Overwrite existing output file if it already exists.",
+    ),
+) -> None:
+    """Send a controlled, scope-verified HTTP request and report response/auth status."""
+    fmt = format_opt.strip().lower()
+    if fmt not in {"text", "json"}:
+        print_error(
+            f"Unsupported output format: '{format_opt}'.",
+            cause=f"Format must be 'text' or 'json', received '{format_opt}'.",
+            remedy="Specify --format text or --format json.",
+        )
+        raise typer.Exit(code=2)
+
+    # 1. Method Validation
+    m_upper = method.strip().upper()
+    try:
+        http_method = HTTPMethod(m_upper)
+    except ValueError as exc:
+        valid_methods = [m.value for m in HTTPMethod]
+        print_error(
+            f"Unsupported HTTP method: '{method}'.",
+            cause=f"Method must be one of: {', '.join(valid_methods)}.",
+            remedy="Specify a valid standard HTTP method (e.g. GET, POST).",
+        )
+        raise typer.Exit(code=2) from exc
+
+    # 2. Parse Custom Headers
+    parsed_headers: dict[str, str] = {}
+    if headers:
+        for h in headers:
+            if ":" not in h:
+                print_error(
+                    f"Invalid header format: '{h}'.",
+                    cause="Header must be formatted as 'Name: Value'.",
+                    remedy="Provide headers in the format --header 'Header-Name: Value'.",
+                )
+                raise typer.Exit(code=2)
+            k, _, v = h.partition(":")
+            parsed_headers[k.strip()] = v.strip()
+
+    # 3. Parse Cookies
+    parsed_cookies: dict[str, str] = {}
+    if cookies:
+        for c in cookies:
+            if "=" not in c:
+                print_error(
+                    f"Invalid cookie format: '{c}'.",
+                    cause="Cookie must be formatted as 'name=value'.",
+                    remedy="Provide cookies in the format --cookie 'name=value'.",
+                )
+                raise typer.Exit(code=2)
+            k, _, v = c.partition("=")
+            parsed_cookies[k.strip()] = v.strip()
+
+    # 4. Parse JSON Body if provided
+    parsed_json_body: Any = None
+    if json_data is not None:
+        try:
+            parsed_json_body = json.loads(json_data)
+        except json.JSONDecodeError as exc:
+            print_error(
+                "Invalid JSON payload provided in --json.",
+                cause=str(exc),
+                remedy="Ensure the payload passed to --json is valid JSON string.",
+            )
+            raise typer.Exit(code=2) from exc
+
+    # 5. Authentication Configuration
+    auth_type_norm = auth_type.strip().lower()
+    try:
+        auth_enum = AuthType(auth_type_norm)
+    except ValueError as exc:
+        valid_auth = [a.value for a in AuthType]
+        print_error(
+            f"Unsupported authentication type: '{auth_type}'.",
+            cause=f"Must be one of: {', '.join(valid_auth)}.",
+            remedy="Select a valid authentication type via --auth-type.",
+        )
+        raise typer.Exit(code=2) from exc
+
+    effective_token = token or os.environ.get("DBSHIELD_AUTH_TOKEN")
+    effective_username = username or os.environ.get("DBSHIELD_AUTH_USERNAME")
+    effective_password = password or os.environ.get("DBSHIELD_AUTH_PASSWORD")
+
+    try:
+        auth_config = AuthConfig(
+            auth_type=auth_enum,
+            token=effective_token,
+            username=effective_username,
+            password=effective_password,
+            custom_headers=parsed_headers if auth_enum == AuthType.HEADER else {},
+            cookies=parsed_cookies if auth_enum == AuthType.COOKIE else {},
+        )
+    except ValueError as exc:
+        print_error(
+            f"Invalid authentication configuration for '{auth_enum.value}': {exc}",
+            cause=str(exc),
+            remedy="Supply all required credentials for the chosen authentication type.",
+        )
+        raise typer.Exit(code=2) from exc
+
+    session_manager = SessionManager(auth_config=auth_config)
+
+    # 6. Target Validation
+    try:
+        target = Target.from_url(url)
+    except URLValidationError as exc:
+        print_error(exc.message, cause=exc.cause, remedy=exc.remedy)
+        raise typer.Exit(code=2) from exc
+
+    # 7. Scope Boundary Pre-flight Check
+    try:
+        settings = get_settings()
+        scope_manager = ScopeManager(
+            allowed_hosts=settings.allowed_hosts,
+            allow_subdomains=settings.allow_subdomains,
+            strict_mode=bool(settings.allowed_hosts),
+        )
+    except Exception as exc:
+        print_error(
+            "Failed to load settings.",
+            cause=str(exc),
+            remedy="Check your environment configuration.",
+        )
+        raise typer.Exit(code=1) from exc
+
+    if not scope_manager.is_url_in_scope(target):
+        print_error(
+            f"Target URL '{target.full_url}' is outside authorized scope.",
+            cause=f"Host '{target.host}' is not listed in allowed_hosts ({settings.allowed_hosts}).",
+            remedy="Update DBSHIELD_ALLOWED_HOSTS in your environment or .env file before scanning.",
+        )
+        raise typer.Exit(code=2)
+
+    if fmt == "text":
+        print_info(f"Dispatching HTTP {http_method.value} request to '{target.full_url}'...")
+
+    # 8. Safe HTTP Request Execution
+    effective_timeout = timeout if timeout is not None else settings.http_timeout
+    effective_max_redirects = max_redirects if max_redirects is not None else settings.max_redirects
+
+    client = SafeHTTPClient(
+        scope_manager=scope_manager,
+        timeout=effective_timeout,
+        max_redirects=effective_max_redirects,
+        user_agent=settings.user_agent,
+        session_manager=session_manager,
+    )
+
+    try:
+        with client:
+            response = client.request(
+                method=http_method,
+                url=target,
+                headers=parsed_headers if auth_enum != AuthType.HEADER else None,
+                cookies=parsed_cookies if auth_enum != AuthType.COOKIE else None,
+                data=data,
+                json=parsed_json_body,
+                follow_redirects=follow_redirects,
+            )
+    except ScopeViolationError as exc:
+        print_error(exc.message, cause=exc.cause, remedy=exc.remedy)
+        raise typer.Exit(code=2) from exc
+    except AuthenticationError as exc:
+        print_error(exc.message, cause=exc.cause, remedy=exc.remedy)
+        raise typer.Exit(code=2) from exc
+    except (NetworkError, HTTPClientError) as exc:
+        print_error(exc.message, cause=exc.cause, remedy=exc.remedy)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        print_error(f"Unexpected request failure: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    # 9. Format Output
+    rendered_text = _format_request_report(response, session_manager, auth_config)
+    safe_result_dict = {
+        "url": response.url,
+        "request_method": response.request_method,
+        "status_code": response.status_code,
+        "is_success": response.is_success,
+        "elapsed_seconds": response.elapsed_seconds,
+        "headers": dict(response.headers),
+        "content_type": response.content_type,
+        "content_length": response.content_length,
+        "redirect_history": response.redirect_history,
+        "truncated": response.truncated,
+        "auth": {
+            "auth_type": auth_config.auth_type.value,
+            "state": session_manager.state.value,
+            "config": auth_config.to_safe_dict(),
+        },
+        "body": response.body,
+    }
+    json_output = json.dumps(safe_result_dict, indent=2)
+
+    # 10. File Output if requested
+    if output is not None:
+        out_path = Path(output)
+        if out_path.exists() and not overwrite:
+            print_error(
+                f"Output destination '{output}' already exists.",
+                cause="Target file exists and --overwrite was not specified.",
+                remedy="Provide a different output path or specify --overwrite to replace it.",
+            )
+            raise typer.Exit(code=1)
+
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            if fmt == "json" or out_path.suffix.lower() == ".json":
+                out_path.write_text(json_output, encoding="utf-8")
+            else:
+                out_path.write_text(rendered_text, encoding="utf-8")
+            print_success(f"Request results successfully exported to '{out_path}'.")
+        except Exception as exc:
+            print_error(
+                f"Failed to write request results to '{out_path}'.",
+                cause=str(exc),
+                remedy="Verify write permissions and disk space for destination path.",
+            )
+            raise typer.Exit(code=1) from exc
+
+    # 11. Render Output to Terminal
+    if fmt == "json":
+        sys.stdout.write(json_output + "\n")
+    else:
+        sys.stdout.write(rendered_text + "\n")
+    sys.stdout.flush()
 
     raise typer.Exit(code=0)
 
