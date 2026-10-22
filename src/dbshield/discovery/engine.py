@@ -30,6 +30,7 @@ from dbshield.models.discovery import (
     InputField,
     PageClassification,
 )
+from dbshield.models.http import HTTPResponse
 from dbshield.models.target import Target
 from dbshield.scope.manager import ScopeManager
 
@@ -135,7 +136,7 @@ class DiscoveryEngine:
             )
 
         # 3. Safe HTTP Page Retrieval
-        response: httpx.Response | None = None
+        response: HTTPResponse | None = None
         final_url: str = target.full_url
         try:
             logger.info("Executing safe HTTP retrieval for target: %s", target.full_url)
@@ -175,6 +176,7 @@ class DiscoveryEngine:
                 errors=errors,
             )
 
+        assert response is not None
         http_status = response.status_code
         content_type = response.headers.get("content-type", "")
 

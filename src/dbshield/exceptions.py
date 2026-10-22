@@ -57,5 +57,9 @@ class DiscoveryError(DBShieldError):
     """Raised when an error occurs during login page retrieval, HTML parsing, or input analysis."""
 
 
+class AuthenticationError(DBShieldError):
+    """Raised when authentication configuration is invalid, credentials fail, or session errors occur."""
+
+
 class CLIExecutionError(DBShieldError):
     """Raised when CLI command execution fails due to invalid parameters or runtime conditions."""

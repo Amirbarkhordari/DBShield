@@ -1,5 +1,4 @@
-"""DBShield data models."""
-
+from dbshield.models.auth import AuthConfig, AuthState, AuthType
 from dbshield.models.discovery import (
     DiscoveredForm,
     DiscoveryResult,
@@ -9,6 +8,7 @@ from dbshield.models.discovery import (
     InputField,
     PageClassification,
 )
+from dbshield.models.http import HTTPMethod, HTTPRequest, HTTPResponse
 from dbshield.models.scan import Scan, ScanProfile, ScanStatus
 from dbshield.models.target import Target
 
@@ -24,4 +24,10 @@ __all__ = [
     "DiscoveredForm",
     "DiscoverySummary",
     "DiscoveryResult",
+    "HTTPMethod",
+    "HTTPRequest",
+    "HTTPResponse",
+    "AuthType",
+    "AuthState",
+    "AuthConfig",
 ]
