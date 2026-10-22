@@ -6,7 +6,7 @@
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
-[![Tests: Pytest](https://img.shields.io/badge/tests-236%20passed-brightgreen.svg)](#)
+[![Tests: Pytest](https://img.shields.io/badge/tests-291%20passed-brightgreen.svg)](#)
 
 ---
 
@@ -17,7 +17,7 @@
 
 ## Project Status
 
-- **Current Phase**: **Phase 5 — NoSQL Injection Detection Engine** (Completed & Verified)
+- **Current Phase**: **Phase 6 — Payload Management and Test Execution Engine** (Completed & Verified)
 - **Roadmap**: 10 Phases leading to advanced database vulnerability detection and Burp Suite integration. See [docs/roadmap.md](docs/roadmap.md).
 
 ### Implemented Functionality
@@ -79,8 +79,29 @@
   - Offline response fixture analysis (`--fixture <path>`): zero-network laboratory validation from captured JSON fixtures.
   - Safety firewall: sensitive parameters (`password`, `token`, `csrf`, `secret`, `otp`) are automatically skipped.
 
-### Out of Scope in Phase 5 (Planned for Future Phases)
-Database extraction, table/collection dumping, data modification, automated exploitation, credential brute-forcing, whole-app crawling, payload generation and mutation suites (Phase 6), and independent verification (Phase 7).
+#### Phase 6: Payload Management and Test Execution Engine
+- **Centralized Payload Catalog (`PayloadCatalog`)**:
+  - Curated, typed, immutable `SecurityPayload` catalog decoupled from orchestration logic.
+  - Deterministic filtering by engine, category, location, technique, provider family, risk level, and tags.
+  - Integrity validation (`validate_catalog()`) verifying reciprocal relationships for paired differential tests.
+- **Isolated Request Mutation (`PayloadTransformer`)**:
+  - Safe parameter mutation across query parameters (flat, repeated, Express bracket notation), URL-encoded form data, and nested JSON structures (dot-paths, array indices).
+  - Deep cloning guarantees caller-owned request structures are never mutated in place.
+- **Centralized Execution Policies & Budget Enforcement (`ExecutionPolicy`, `ExecutionBudgetTracker`)**:
+  - Global and per-parameter request ceilings preventing resource exhaustion.
+  - Automatic exclusion of sensitive fields (`password`, `token`, `csrf`, `secret`, `session`).
+  - Cooperative cancellation and per-request timeouts.
+- **Engine Adapters (`SQLiExecutionAdapter`, `NoSQLiExecutionAdapter`)**:
+  - Typed adapters invoking Phase 4 and 5 detectors without duplicating vulnerability logic.
+- **Reusable Test Execution Orchestrator (`TestExecutionOrchestrator`)**:
+  - Centralized lifecycle coordination: scope validation, parameter extraction, baseline profiling, isolated variant generation, bounded execution, and structured result tracking.
+  - Offline response fixture analysis (`execute_offline_fixture`) for zero-network validation.
+- **Dedicated CLI Commands**:
+  - `dbshield payloads`: list, filter, inspect, and validate payload definitions.
+  - `dbshield execute`: run multi-engine test runs across online targets or offline JSON fixtures.
+
+### Out of Scope in Phase 6 (Planned for Future Phases)
+Database extraction, table/collection dumping, data modification, automated exploitation, credential brute-forcing, whole-app crawling, evidence corroboration and false-positive elimination (Phase 7), and Burp Suite extension bindings (Phase 10).
 
 ---
 
@@ -298,6 +319,79 @@ dbshield nosqli --fixture ./tests/fixtures/nosqli_sample.json
 - `--output`, `-o`: File path to export results.
 - `--overwrite`: Overwrite destination output file if it exists.
 
+### 6. Centralized Payload Catalog (`payloads`)
+
+Inspect, filter, and validate DBShield's centralized test payload catalog:
+
+#### List All Registered Payloads
+```bash
+dbshield payloads
+```
+
+#### Filter by Engine and Category
+```bash
+dbshield payloads --engine sqli --category sqli
+dbshield payloads --engine nosqli --location json
+```
+
+#### Inspect Detailed Payload Specification
+```bash
+dbshield payloads --info SQLI_ERR_QUOTE
+```
+
+#### Validate Catalog Integrity and Pair Relationships
+```bash
+dbshield payloads --validate
+```
+
+#### Export Payload Definitions to JSON
+```bash
+dbshield payloads --format json --output ./payloads.json --overwrite
+```
+
+### 7. Orchestrated Test Execution (`execute`)
+
+Execute controlled security assessment test cases across engines using the Phase 6 execution engine:
+
+#### Run Full Execution Suite on Authorized Target
+```bash
+dbshield execute --url https://app.example.com/item?id=10
+```
+
+#### Targeted Parameter Execution with Custom Budgets
+```bash
+dbshield execute \
+  --url https://app.example.com/search \
+  --engine sqli \
+  --param q \
+  --max-budget 20 \
+  --max-param-budget 6
+```
+
+#### Offline Laboratory Fixture Assessment (Zero Network Traffic)
+```bash
+dbshield execute \
+  --fixture ./tests/fixtures/sqli_sample.json \
+  --engine sqli \
+  --format json \
+  --output ./execution_run.json
+```
+
+#### Execute Command Options
+- `--url`, `-u`: Target URL to assess (required unless `--fixture` is specified).
+- `--fixture`: Path to JSON file containing captured baseline and test responses.
+- `--engine`, `-e`: Target detection engine (`sqli`, `nosqli`, or `all`, default `all`).
+- `--param`, `-p`: Specific candidate parameter to test.
+- `--method`, `-m`: HTTP request method (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`).
+- `--data`, `-d`: Raw or form data.
+- `--json`, `-j`: JSON request body.
+- `--max-budget`: Global request budget ceiling (default: 50).
+- `--max-param-budget`: Per-parameter request ceiling (default: 15).
+- `--timeout`: HTTP request timeout in seconds.
+- `--format`, `-f`: Output format (`text` or `json`, default `text`).
+- `--output`, `-o`: File path to export execution run results.
+- `--overwrite`: Overwrite destination output file if it exists.
+
 ---
 
 ## Configuration
@@ -320,7 +414,7 @@ Configuration is managed via environment variables or a local `.env` file (see `
 
 ## Development and Testing
 
-Execute the test suite (115 unit and integration tests):
+Execute the test suite (291 unit and integration tests):
 ```bash
 pytest
 ```
@@ -355,27 +449,33 @@ dbshield/
 │   ├── development.md        # Contributor and development workflow
 │   ├── roadmap.md            # 10-phase project evolution roadmap
 │   └── phases/
-│       ├── phase-01.md       # Phase 1 completion and verification report
-│       └── phase-02.md       # Phase 2 completion and verification report
+│       ├── phase-01.md       # Phase 1: Project Foundation & Architecture
+│       ├── phase-02.md       # Phase 2: Login Page Discovery Engine
+│       ├── phase-03.md       # Phase 3: HTTP Request & Session Management
+│       ├── phase-04.md       # Phase 4: SQL Injection Testing Engine
+│       ├── phase-05.md       # Phase 5: NoSQL Injection Detection Engine
+│       └── phase-06.md       # Phase 6: Payload Catalog & Test Execution Engine
 ├── src/
 │   └── dbshield/
 │       ├── __init__.py       # Package metadata
 │       ├── __main__.py       # Module entry point
-│       ├── cli.py            # Typer CLI interface (doctor, inspect, info, discover)
+│       ├── cli.py            # Typer CLI interface (all commands)
 │       ├── config.py         # Pydantic Settings management
 │       ├── exceptions.py     # Structured exception hierarchy
 │       ├── logging_config.py # Structured logging and secret redaction
 │       ├── models/           # Domain data models (Target, Scan, Discovery)
 │       ├── scope/            # ScopeManager boundary enforcement
 │       ├── http/             # Scope-aware SafeHTTPClient
-│       └── discovery/        # Login Page Discovery Engine
-│           ├── __init__.py   # Discovery package exports
-│           ├── parser.py     # Tolerant HTML form & control parser
-│           ├── classifier.py # Rule-based heuristic classification
-│           └── engine.py     # Discovery workflow orchestrator
+│       ├── discovery/        # Login Page Discovery Engine
+│       ├── auth/             # Session & Authentication Management
+│       ├── sqli/             # SQL Injection Detection Engine
+│       ├── nosqli/           # NoSQL Injection Detection Engine
+│       ├── payloads/         # Centralized Payload Catalog & Models
+│       └── execution/        # Orchestrator, Transformers, Policies & Adapters
 └── tests/
-    ├── unit/                 # Unit tests (config, models, scope, logging, cli, parser, classifier)
-    └── integration/          # Integration tests (HTTP client, discovery engine, CLI discover)
+    ├── unit/                 # Unit tests (config, models, scope, logging, cli, parser, classifier, sqli, nosqli, payloads, execution)
+    ├── integration/          # Integration tests (HTTP client, discovery, auth, sqli, nosqli, execution orchestrator, cli)
+    └── fixtures/             # Offline laboratory test fixtures
 ```
 
 ---

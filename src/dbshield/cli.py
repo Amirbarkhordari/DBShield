@@ -28,6 +28,14 @@ from dbshield.exceptions import (
     ScopeViolationError,
     URLValidationError,
 )
+from dbshield.execution.adapters import (
+    EngineAdapter,
+    NoSQLiExecutionAdapter,
+    SQLiExecutionAdapter,
+)
+from dbshield.execution.models import ExecutionRunResult
+from dbshield.execution.orchestrator import TestExecutionOrchestrator
+from dbshield.execution.policy import ExecutionPolicy
 from dbshield.http.client import SafeHTTPClient
 from dbshield.logging_config import configure_logging
 from dbshield.models.auth import AuthConfig, AuthType
@@ -36,9 +44,15 @@ from dbshield.models.http import HTTPMethod, HTTPResponse
 from dbshield.models.target import Target
 from dbshield.nosqli.engine import NoSQLiEngine
 from dbshield.nosqli.models import NoSQLScanResult
+from dbshield.payloads.catalog import PayloadCatalog
+from dbshield.payloads.models import (
+    PayloadCategory,
+    PayloadRiskLevel,
+    SecurityPayload,
+)
 from dbshield.scope.manager import ScopeManager
 from dbshield.sqli.engine import SQLiEngine
-from dbshield.sqli.models import SQLiScanResult
+from dbshield.sqli.models import ParameterLocation, SQLiScanResult
 
 app = typer.Typer(
     name="dbshield",
@@ -1678,6 +1692,681 @@ def nosqli_cmd(
         sys.stdout.write(rendered_text + "\n")
     sys.stdout.flush()
 
+    raise typer.Exit(code=0)
+
+
+def _format_payloads_report(payloads: list[SecurityPayload]) -> str:
+    """Format structured payload catalog listing for terminal presentation."""
+    lines = [
+        "=" * 80,
+        "                     DBShield Security Payload Catalog                          ",
+        "=" * 80,
+        f"  Total Registered Payloads: {len(payloads)}",
+        "-" * 80,
+        f"  {'ID':<24} {'CATEGORY':<10} {'TECHNIQUE':<16} {'RISK':<12} {'LOCATIONS'}",
+        "-" * 80,
+    ]
+    for p in payloads:
+        locs = ",".join(loc.value for loc in p.applicable_locations)
+        lines.append(
+            f"  {p.payload_id:<24} {p.category.value:<10} {p.technique:<16} {p.risk_level.value:<12} {locs}"
+        )
+    lines.append("=" * 80)
+    return "\n".join(lines)
+
+
+def _format_payload_detail(payload: SecurityPayload) -> str:
+    """Format single payload detailed metadata for terminal presentation."""
+    lines = [
+        "=" * 80,
+        "                    DBShield Security Payload Specification                      ",
+        "=" * 80,
+        f"  Payload ID:           {payload.payload_id}",
+        f"  Name:                 {payload.name}",
+        f"  Description:          {payload.description}",
+        f"  Category:             {payload.category.value.upper()}",
+        f"  Technique:            {payload.technique}",
+        f"  Risk Level:           {payload.risk_level.value.upper()}",
+        f"  Value:                {payload.payload_value!r}",
+        f"  Applicable Locations: {', '.join(loc.value for loc in payload.applicable_locations)}",
+        f"  Applicable Engines:   {', '.join(payload.applicable_engines) if payload.applicable_engines else 'all'}",
+        f"  Target Providers:     {', '.join(payload.target_providers) if payload.target_providers else 'all'}",
+        f"  Paired Payload ID:    {payload.paired_with_id or 'none'}",
+        f"  Pair Role:            {payload.pair_role or 'none'}",
+        f"  Safety Constraints:   {', '.join(payload.safety_constraints) if payload.safety_constraints else 'standard'}",
+        f"  Tags:                 {', '.join(payload.tags) if payload.tags else 'none'}",
+        "=" * 80,
+    ]
+    return "\n".join(lines)
+
+
+def _format_execution_report(result: ExecutionRunResult) -> str:
+    """Format structured test execution orchestrator run results for terminal presentation."""
+    lines = [
+        "=" * 80,
+        "                 DBShield Test Execution Orchestrator Report                    ",
+        "=" * 80,
+        f"  Target URL:             {result.target_url}",
+        f"  Run ID:                 {result.run_id}",
+        f"  Engine:                 {result.engine_name.upper()}",
+        f"  Execution Status:       {result.execution_status.upper()}",
+        f"  Total Duration:         {result.summary.duration_seconds:.3f}s",
+        f"  Total Requests:         {result.summary.total_requests}",
+        "-" * 80,
+        "  Execution Test Metrics:",
+        f"    Total Test Cases:                  {result.summary.total_test_cases}",
+        f"    Executed Test Cases:               {result.summary.executed_test_cases}",
+        f"    Skipped Test Cases:                {result.summary.skipped_test_cases}",
+        f"    Failed Test Cases:                 {result.summary.failed_test_cases}",
+        f"    Findings Generated:                {len(result.findings)}",
+    ]
+    if result.findings:
+        lines.extend(["-" * 80, "  Detected Findings:"])
+        for idx, finding in enumerate(result.findings, start=1):
+            status = getattr(finding, "status", None)
+            badge = f"[{status.value.upper()}]" if status else "[FINDING]"
+            param = getattr(finding, "parameter", None)
+            param_name = getattr(param, "name", "unknown") if param else "unknown"
+            tech = getattr(finding, "technique", None)
+            tech_val = getattr(tech, "value", str(tech)) if tech else "unknown"
+            summary_txt = getattr(finding, "evidence_summary", "")
+            lines.append(f"    {idx}. Parameter '{param_name}' {badge} ({tech_val})")
+            if summary_txt:
+                lines.append(f"       Summary: {summary_txt}")
+    if result.records:
+        lines.extend(["-" * 80, "  Test Case Execution Records (Sample):"])
+        for rec in result.records[:15]:
+            status_badge = f"[{rec.status.value.upper()}]"
+            lines.append(
+                f"    * {rec.test_case_id:<36} {status_badge:<11} {rec.elapsed_seconds:.3f}s"
+            )
+            if rec.error_or_skip_reason:
+                lines.append(f"      Reason: {rec.error_or_skip_reason}")
+        if len(result.records) > 15:
+            lines.append(f"    ... and {len(result.records) - 15} more test records.")
+    lines.append("=" * 80)
+    return "\n".join(lines)
+
+
+@app.command(name="payloads")
+def payloads_cmd(
+    engine: str | None = typer.Option(
+        None,
+        "--engine",
+        "-e",
+        help="Filter payloads by target engine ('sqli', 'nosqli').",
+    ),
+    category: str | None = typer.Option(
+        None,
+        "--category",
+        "-c",
+        help="Filter payloads by category ('sqli', 'nosqli', 'generic').",
+    ),
+    technique: str | None = typer.Option(
+        None,
+        "--technique",
+        "-t",
+        help="Filter payloads by testing technique ('error_based', 'differential', etc.).",
+    ),
+    location: str | None = typer.Option(
+        None,
+        "--location",
+        "-l",
+        help="Filter payloads by applicable parameter location ('query', 'body', 'json').",
+    ),
+    risk: str | None = typer.Option(
+        None,
+        "--risk",
+        "-r",
+        help="Filter payloads by risk level ('safe_probe', 'read_only').",
+    ),
+    info: str | None = typer.Option(
+        None,
+        "--info",
+        "-i",
+        help="Inspect detailed metadata for a specific payload identifier.",
+    ),
+    validate_catalog: bool = typer.Option(
+        False,
+        "--validate",
+        help="Validate payload catalog integrity and paired payload consistency.",
+    ),
+    fmt: str = typer.Option(
+        "text",
+        "--format",
+        "-f",
+        help="Output format: text (human-readable table) or json.",
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Optional file path to export payload catalog or metadata.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Overwrite destination output file if it already exists.",
+    ),
+) -> None:
+    """Inspect, filter, and validate DBShield's centralized test payload catalog."""
+    fmt_clean = fmt.lower().strip()
+    if fmt_clean not in {"text", "json"}:
+        print_error(
+            f"Invalid format '{fmt}'.",
+            cause="The --format option must be either 'text' or 'json'.",
+            remedy="Specify '--format text' or '--format json'.",
+        )
+        raise typer.Exit(code=2)
+
+    catalog = PayloadCatalog()
+
+    # 1. Validation mode
+    if validate_catalog:
+        try:
+            catalog.validate_catalog()
+        except Exception as exc:
+            print_error(
+                "Payload catalog validation failed.",
+                cause=str(exc),
+                remedy="Review payload definitions for missing pairs or invalid attributes.",
+            )
+            raise typer.Exit(code=1) from exc
+
+        print_success(
+            f"Payload catalog validation passed. All {len(catalog.get_all())} definitions are consistent."
+        )
+        raise typer.Exit(code=0)
+
+    # 2. Detailed info mode
+    if info:
+        payload = catalog.get_payload(info.strip())
+        if not payload:
+            print_error(
+                f"Payload '{info}' not found.",
+                cause=f"No registered payload definition matching identifier '{info}'.",
+                remedy="Run 'dbshield payloads' to list valid payload identifiers.",
+            )
+            raise typer.Exit(code=2)
+
+        rendered_text = _format_payload_detail(payload)
+        json_output = payload.model_dump_json(indent=2)
+
+        if output:
+            out_path = Path(output)
+            if out_path.exists() and not overwrite:
+                print_error(
+                    f"Output destination '{output}' already exists.",
+                    cause="Target file exists and --overwrite was not specified.",
+                    remedy="Provide a different output path or specify --overwrite to replace it.",
+                )
+                raise typer.Exit(code=1)
+            try:
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_text(
+                    json_output if fmt_clean == "json" else rendered_text, encoding="utf-8"
+                )
+                print_success(f"Payload details exported to '{out_path}'.")
+            except Exception as exc:
+                print_error(f"Failed to write to '{output}'.", cause=str(exc))
+                raise typer.Exit(code=1) from exc
+
+        if fmt_clean == "json":
+            sys.stdout.write(json_output + "\n")
+        else:
+            sys.stdout.write(rendered_text + "\n")
+        sys.stdout.flush()
+        raise typer.Exit(code=0)
+
+    # 3. Filtering and listing mode
+    cat_enum = None
+    if category:
+        try:
+            cat_enum = PayloadCategory(category.lower().strip())
+        except ValueError:
+            valid_cats = [c.value for c in PayloadCategory]
+            print_error(
+                f"Invalid category '{category}'.",
+                cause=f"Must be one of: {', '.join(valid_cats)}.",
+                remedy="Provide a valid payload category.",
+            )
+            raise typer.Exit(code=2) from None
+
+    risk_enum = None
+    if risk:
+        try:
+            risk_enum = PayloadRiskLevel(risk.lower().strip())
+        except ValueError:
+            valid_risks = [r.value for r in PayloadRiskLevel]
+            print_error(
+                f"Invalid risk level '{risk}'.",
+                cause=f"Must be one of: {', '.join(valid_risks)}.",
+                remedy="Provide a valid risk level.",
+            )
+            raise typer.Exit(code=2) from None
+
+    loc_enum = None
+    if location:
+        try:
+            loc_enum = ParameterLocation(location.lower().strip())
+        except ValueError:
+            valid_locs = [loc.value for loc in ParameterLocation]
+            print_error(
+                f"Invalid parameter location '{location}'.",
+                cause=f"Must be one of: {', '.join(valid_locs)}.",
+                remedy="Provide a valid parameter location.",
+            )
+            raise typer.Exit(code=2) from None
+
+    payloads = catalog.filter(
+        category=cat_enum,
+        technique=technique.strip() if technique else None,
+        engine=engine.strip() if engine else None,
+        location=loc_enum,
+        risk_level=risk_enum,
+    )
+
+    rendered_text = _format_payloads_report(payloads)
+    json_output = json.dumps([p.model_dump(mode="json") for p in payloads], indent=2)
+
+    if output:
+        out_path = Path(output)
+        if out_path.exists() and not overwrite:
+            print_error(
+                f"Output destination '{output}' already exists.",
+                cause="Target file exists and --overwrite was not specified.",
+                remedy="Provide a different output path or specify --overwrite to replace it.",
+            )
+            raise typer.Exit(code=1)
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                json_output if fmt_clean == "json" else rendered_text, encoding="utf-8"
+            )
+            print_success(f"Payload catalog listing exported to '{out_path}'.")
+        except Exception as exc:
+            print_error(f"Failed to write to '{output}'.", cause=str(exc))
+            raise typer.Exit(code=1) from exc
+
+    if fmt_clean == "json":
+        sys.stdout.write(json_output + "\n")
+    else:
+        sys.stdout.write(rendered_text + "\n")
+    sys.stdout.flush()
+    raise typer.Exit(code=0)
+
+
+@app.command(name="execute")
+def execute_cmd(
+    url: str | None = typer.Option(
+        None,
+        "--url",
+        "-u",
+        help="Target web application URL to assess.",
+    ),
+    engine: str = typer.Option(
+        "all",
+        "--engine",
+        "-e",
+        help="Target detection engine to orchestrate ('sqli', 'nosqli', or 'all').",
+    ),
+    param: str | None = typer.Option(
+        None,
+        "--param",
+        "-p",
+        help="Specific candidate parameter to test (defaults to all eligible parameters).",
+    ),
+    method: str = typer.Option(
+        "GET",
+        "--method",
+        "-m",
+        help="HTTP request method (GET, POST, PUT, PATCH, DELETE).",
+    ),
+    data: str | None = typer.Option(
+        None,
+        "--data",
+        "-d",
+        help="Raw or URL-encoded form data body.",
+    ),
+    json_data: str | None = typer.Option(
+        None,
+        "--json",
+        "-j",
+        help="JSON formatted request body (supports nested paths and array mutation).",
+    ),
+    fixture: str | None = typer.Option(
+        None,
+        "--fixture",
+        help="Path to JSON file containing captured baseline and test responses for offline testing.",
+    ),
+    auth_type: str = typer.Option(
+        "none",
+        "--auth-type",
+        help="Authentication method: none, bearer, basic, header, cookie.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        help="Bearer token (or DBSHIELD_AUTH_TOKEN env var).",
+    ),
+    username: str | None = typer.Option(
+        None,
+        "--username",
+        help="HTTP Basic username (or DBSHIELD_AUTH_USERNAME env var).",
+    ),
+    password: str | None = typer.Option(
+        None,
+        "--password",
+        help="HTTP Basic password (or DBSHIELD_AUTH_PASSWORD env var).",
+    ),
+    cookie: str | None = typer.Option(
+        None,
+        "--cookie",
+        help="Session cookie in 'name=value' format.",
+    ),
+    max_budget: int = typer.Option(
+        50,
+        "--max-budget",
+        help="Maximum total HTTP requests allowed for the execution run.",
+    ),
+    max_param_budget: int = typer.Option(
+        15,
+        "--max-param-budget",
+        help="Maximum HTTP requests allowed per individual parameter.",
+    ),
+    timeout: float | None = typer.Option(
+        None,
+        "--timeout",
+        help="HTTP request timeout in seconds.",
+    ),
+    fmt: str = typer.Option(
+        "text",
+        "--format",
+        "-f",
+        help="Output format: text or json.",
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Optional file path to export execution run results.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Overwrite destination output file if it already exists.",
+    ),
+) -> None:
+    """Execute controlled security test cases across engines using the Phase 6 execution engine."""
+    fmt_clean = fmt.lower().strip()
+    if fmt_clean not in {"text", "json"}:
+        print_error(
+            f"Invalid format '{fmt}'.",
+            cause="The --format option must be either 'text' or 'json'.",
+            remedy="Specify '--format text' or '--format json'.",
+        )
+        raise typer.Exit(code=2)
+
+    engine_clean = engine.lower().strip()
+    if engine_clean not in {"sqli", "nosqli", "all"}:
+        print_error(
+            f"Invalid engine '{engine}'.",
+            cause="Supported engines are 'sqli', 'nosqli', or 'all'.",
+            remedy="Specify '--engine sqli', '--engine nosqli', or '--engine all'.",
+        )
+        raise typer.Exit(code=2)
+
+    # 1. Offline fixture mode
+    if fixture:
+        fix_path = Path(fixture)
+        if not fix_path.is_file():
+            print_error(
+                f"Fixture file '{fixture}' not found.",
+                cause="The specified fixture path does not exist or is not a readable file.",
+                remedy="Provide a valid path to a JSON response fixture file.",
+            )
+            raise typer.Exit(code=2)
+
+        try:
+            fix_content = json.loads(fix_path.read_text(encoding="utf-8"))
+            t_url = fix_content.get("target_url", "http://laboratory.local/fixture")
+            p_name = fix_content.get("parameter", param or "id")
+            p_loc_str = fix_content.get("location", "query")
+            p_loc = ParameterLocation(p_loc_str)
+            p_id = fix_content.get("payload_id", "SQLI_ERR_QUOTE")
+
+            base_info = fix_content.get("baseline", {})
+            test_info = fix_content.get("test", {})
+            base_resp = HTTPResponse(
+                url=t_url,
+                status_code=base_info.get("status_code", 200),
+                body=base_info.get("body", ""),
+            )
+            test_resp = HTTPResponse(
+                url=t_url,
+                status_code=test_info.get("status_code", 200),
+                body=test_info.get("body", ""),
+            )
+
+            true_resp = None
+            false_resp = None
+            if "true_response" in fix_content and "false_response" in fix_content:
+                true_info = fix_content["true_response"]
+                false_info = fix_content["false_response"]
+                true_resp = HTTPResponse(
+                    url=t_url,
+                    status_code=true_info.get("status_code", 200),
+                    body=true_info.get("body", ""),
+                )
+                false_resp = HTTPResponse(
+                    url=t_url,
+                    status_code=false_info.get("status_code", 200),
+                    body=false_info.get("body", ""),
+                )
+
+            adapter = (
+                NoSQLiExecutionAdapter() if engine_clean == "nosqli" else SQLiExecutionAdapter()
+            )
+            print_info(
+                f"Analyzing offline fixture from '{fix_path}' via {adapter.engine_name.upper()}..."
+            )
+            result = TestExecutionOrchestrator.execute_offline_fixture(
+                target_url=t_url,
+                param_name=p_name,
+                param_location=p_loc,
+                payload_id=p_id,
+                baseline_response=base_resp,
+                test_response=test_resp,
+                adapter=adapter,
+                true_response=true_resp,
+                false_response=false_resp,
+            )
+        except Exception as exc:
+            print_error(
+                "Failed to process offline fixture.",
+                cause=str(exc),
+                remedy="Ensure fixture file is valid JSON matching DBShield fixture specifications.",
+            )
+            raise typer.Exit(code=1) from exc
+
+    # 2. Live online target execution mode
+    else:
+        if not url:
+            print_error(
+                "Missing target specification.",
+                cause="Neither --url nor --fixture was provided.",
+                remedy="Specify a target via --url <URL> or offline fixture via --fixture <PATH>.",
+            )
+            raise typer.Exit(code=2)
+
+        try:
+            target = Target.from_url(url)
+        except URLValidationError as exc:
+            print_error(exc.message, cause=exc.cause, remedy=exc.remedy)
+            raise typer.Exit(code=2) from exc
+
+        settings = get_settings()
+        scope_manager = ScopeManager(
+            allowed_hosts=settings.allowed_hosts,
+            allow_subdomains=settings.allow_subdomains,
+            strict_mode=bool(settings.allowed_hosts),
+        )
+        try:
+            scope_manager.assert_in_scope(target)
+        except ScopeViolationError as exc:
+            print_error(
+                f"Target host '{target.host}' is not within authorized scope.",
+                cause=exc.cause or "Host does not match any entry in allowed_hosts.",
+                remedy=exc.remedy
+                or "Configure DBSHIELD_ALLOWED_HOSTS to authorize target before scanning.",
+            )
+            raise typer.Exit(code=2) from exc
+
+        # Authentication Configuration
+        effective_token = token or os.environ.get("DBSHIELD_AUTH_TOKEN")
+        effective_username = username or os.environ.get("DBSHIELD_AUTH_USERNAME")
+        effective_password = password or os.environ.get("DBSHIELD_AUTH_PASSWORD")
+
+        try:
+            auth_mode = AuthType(auth_type.lower().strip())
+        except ValueError:
+            print_error(
+                f"Invalid auth-type '{auth_type}'.",
+                cause=f"'{auth_type}' is not a recognized authentication method.",
+                remedy="Supported methods: none, bearer, basic, header, cookie.",
+            )
+            raise typer.Exit(code=2) from None
+
+        try:
+            auth_config = AuthConfig(
+                auth_type=auth_mode,
+                token=effective_token,
+                username=effective_username,
+                password=effective_password,
+                cookies={"session": cookie} if cookie else {},
+            )
+        except ValueError as exc:
+            print_error(
+                "Invalid authentication configuration parameters.",
+                cause=str(exc),
+                remedy="Check required credentials for the chosen auth mode.",
+            )
+            raise typer.Exit(code=2) from exc
+
+        session_mgr = SessionManager(auth_config=auth_config)
+        session_mgr.bind_target(target)
+
+        effective_timeout = timeout if timeout is not None else settings.http_timeout
+        http_client = SafeHTTPClient(
+            scope_manager=scope_manager,
+            timeout=effective_timeout,
+            session_manager=session_mgr,
+        )
+
+        policy = ExecutionPolicy(
+            max_total_requests=max_budget,
+            max_requests_per_parameter=max_param_budget,
+            timeout_seconds=effective_timeout,
+        )
+
+        adapters: list[EngineAdapter] = []
+        if engine_clean in {"sqli", "all"}:
+            adapters.append(SQLiExecutionAdapter())
+        if engine_clean in {"nosqli", "all"}:
+            adapters.append(NoSQLiExecutionAdapter())
+
+        orchestrator = TestExecutionOrchestrator(
+            scope_manager=scope_manager,
+            http_client=http_client,
+            session_manager=session_mgr,
+            policy=policy,
+        )
+
+        print_info(f"Initiating orchestrated execution test run on: {target.full_url}")
+        results: list[ExecutionRunResult] = []
+        for adp in adapters:
+            try:
+                res = orchestrator.execute_suite(
+                    target_url=target,
+                    adapter=adp,
+                    selected_param=param,
+                    method=method,
+                    data=data,
+                    json_data=json_data,
+                )
+                results.append(res)
+            except Exception as exc:
+                print_error(
+                    f"Operational failure during {adp.engine_name.upper()} execution run.",
+                    cause=str(exc),
+                    remedy="Review target connectivity and configuration.",
+                )
+                raise typer.Exit(code=1) from exc
+
+        result = results[0] if len(results) == 1 else results[0]
+        # If multiple adapters, merge records and findings into single result for display
+        if len(results) > 1:
+            all_records = []
+            all_findings = []
+            total_reqs = sum(r.summary.total_requests for r in results)
+            total_cases = sum(r.summary.total_test_cases for r in results)
+            exec_cases = sum(r.summary.executed_test_cases for r in results)
+            skip_cases = sum(r.summary.skipped_test_cases for r in results)
+            fail_cases = sum(r.summary.failed_test_cases for r in results)
+            duration = sum(r.summary.duration_seconds for r in results)
+            for r in results:
+                all_records.extend(r.records)
+                all_findings.extend(r.findings)
+            from dbshield.execution.models import ExecutionSummary
+
+            merged_summary = ExecutionSummary(
+                total_test_cases=total_cases,
+                executed_test_cases=exec_cases,
+                skipped_test_cases=skip_cases,
+                failed_test_cases=fail_cases,
+                total_requests=total_reqs,
+                duration_seconds=round(duration, 3),
+            )
+            result = ExecutionRunResult(
+                target_url=target.full_url,
+                engine_name="sqli+nosqli",
+                execution_status="completed",
+                summary=merged_summary,
+                records=all_records,
+                findings=all_findings,
+            )
+
+    rendered_text = _format_execution_report(result)
+    json_output = result.model_dump_json(indent=2)
+
+    if output is not None:
+        out_path = Path(output)
+        if out_path.exists() and not overwrite:
+            print_error(
+                f"Output destination '{output}' already exists.",
+                cause="Target file exists and --overwrite was not specified.",
+                remedy="Provide a different output path or specify --overwrite to replace it.",
+            )
+            raise typer.Exit(code=1)
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                json_output if fmt_clean == "json" else rendered_text, encoding="utf-8"
+            )
+            print_success(f"Execution run results successfully exported to '{out_path}'.")
+        except Exception as exc:
+            print_error(
+                f"Failed to write results to '{out_path}'.",
+                cause=str(exc),
+                remedy="Verify write permissions for destination path.",
+            )
+            raise typer.Exit(code=1) from exc
+
+    if fmt_clean == "json":
+        sys.stdout.write(json_output + "\n")
+    else:
+        sys.stdout.write(rendered_text + "\n")
+    sys.stdout.flush()
     raise typer.Exit(code=0)
 
 

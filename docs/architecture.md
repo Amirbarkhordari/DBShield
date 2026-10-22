@@ -376,7 +376,71 @@ The Phase 4 SQL Injection Detection Engine provides modular, defensive, and expl
 
 ---
 
-## 8. Extension Points for Future Phases
+## 8. Payload Management & Test Execution Subsystem (`dbshield.payloads`, `dbshield.execution`)
+
+### 8.1 Architecture and Data Flow
+
+```
+                  +--------------------------+
+                  |      PayloadCatalog      |
+                  |  (Curated, Data-Driven)  |
+                  +------------+-------------+
+                               |
+                               v
++------------------+     +-------------------------------+     +--------------------+
+|  ExecutionPolicy | --> |   TestExecutionOrchestrator   | <-- | SafeHTTPClient     |
+| (Ceilings/Scope) |     |  (Lifecycle Coordination)     |     | & ScopeManager     |
++------------------+     +---------------+---------------+     +--------------------+
+                                         |
+                                         v
+                               +-------------------+
+                               | PayloadTransformer|
+                               | (Isolated Clones) |
+                               +---------+---------+
+                                         |
+                                         v
+                         +---------------+---------------+
+                         |         EngineAdapter         |
+                         +---------------+---------------+
+                                         |
+                         +---------------+---------------+
+                         |                               |
+                         v                               v
+             +-----------------------+       +-----------------------+
+             | SQLiExecutionAdapter  |       | NoSQLiExecutionAdapter|
+             | (Error / Differential)|       | (Error / Differential)|
+             +-----------------------+       +-----------------------+
+```
+
+### 8.2 Key Abstractions
+
+1. **`PayloadCatalog` & `SecurityPayload` (`dbshield.payloads`)**:
+   - Curated, data-driven registry of defensive test definitions strictly decoupled from orchestration logic.
+   - Enforces immutability and metadata validation: unique identifiers, descriptive tags, categories (`SQLI`, `NOSQLI`), applicable parameter locations, risk classifications, paired roles (`true`/`false`), and safety constraints.
+   - Deterministic filtering across engine, location, technique, provider, risk level, and tags.
+   - Internal integrity validation (`validate_catalog()`) verifying reciprocal paired relationships.
+
+2. **`PayloadTransformer` (`dbshield.execution.transformer`)**:
+   - Isolated mutation engine generating test request variants without modifying caller-owned objects in place.
+   - Supports query parameters (flat, repeated, Express bracket notation), URL-encoded form data, and nested JSON documents (dot-paths, array indices).
+   - Deep cloning (`copy.deepcopy`) guarantees complete isolation of candidate requests.
+
+3. **`ExecutionPolicy` & `ExecutionBudgetTracker` (`dbshield.execution.policy`)**:
+   - Centralized enforcement of global request ceilings, per-parameter request limits, and max payloads per parameter.
+   - Sensitive parameter exclusion filtering passwords, tokens, nonces, and session credentials.
+   - Cooperative cancellation and timeout management.
+
+4. **`EngineAdapter` (`dbshield.execution.adapters`)**:
+   - Decoupled bridge invoking `ErrorDetector`, `DifferentialDetector`, `NoSQLErrorDetector`, and `NoSQLDifferentialDetector` without duplicating classification rules.
+   - Preserves existing public APIs and models (`SQLiFinding`, `NoSQLFinding`).
+
+5. **`TestExecutionOrchestrator` (`dbshield.execution.orchestrator`)**:
+   - Manages complete test lifecycles: scope validation, candidate parameter extraction, baseline probing, payload selection, isolated mutation, safe HTTP dispatch, and structured finding recording.
+   - Supports offline response fixture analysis without network dispatch.
+
+---
+
+## 9. Extension Points for Future Phases
 
 | Phase | Module | Integration Point & Planned Responsibility | Status |
 | :--- | :--- | :--- | :--- |
@@ -385,7 +449,7 @@ The Phase 4 SQL Injection Detection Engine provides modular, defensive, and expl
 | **Phase 3: Auth & Sessions** | `dbshield.auth` / `dbshield.http` | Reusable HTTP layer, origin-isolated sessions, cookie jar, auth. | **Completed** |
 | **Phase 4: SQLi Engine** | `dbshield.sqli` | Controlled SQL injection detection routines against target inputs. | **Completed** |
 | **Phase 5: NoSQLi Engine** | `dbshield.nosqli` | Controlled NoSQL injection detection routines with nested JSON support. | **Completed** |
-| **Phase 6: Payload Execution**| `dbshield.payloads` | Payload generation, mutation, and safe rate-limited delivery. | Planned |
+| **Phase 6: Payload Execution**| `dbshield.payloads` / `dbshield.execution` | Reusable payload catalog, isolated transformer, budget policies, engine orchestrator. | **Completed** |
 | **Phase 7: Evidence Analysis**| `dbshield.analysis` | Response anomaly detection, error pattern matching, differential analysis.| Planned |
 | **Phase 8: Reporting** | `dbshield.reporting` | Formatted JSON, HTML, and Markdown assessment summaries. | Planned |
 | **Phase 9: Lab Validation** | `tests.lab` | Automated test suite execution against isolated test targets. | Planned |

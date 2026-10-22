@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-10-22
+## [0.6.0] - 2026-10-22
+
+### Added
+- **Phase 6 Payload Management and Test Execution Engine**: Common reusable foundation for managing test payloads, isolated input mutation, execution budgeting, engine orchestration, and structured result tracking.
+- **Centralized Payload Catalog (`PayloadCatalog`)**: Decoupled, data-driven security payload repository supporting categories (`sqli`, `nosqli`, `generic`), risk classifications, locations, provider hints, paired roles, and safety constraints.
+- **Deterministic Filtering & Catalog Integrity Verification**: Programmatic and CLI filtering by engine, category, location, technique, provider family, risk level, and tags with reciprocal paired payload validation.
+- **Isolated Parameter Transformer (`PayloadTransformer`)**: Non-destructive request variant generator using deep copies to mutate query parameters (flat, repeated, Express bracket notation), URL-encoded forms, and nested JSON structures (dot-paths, array indices) without altering caller-owned objects.
+- **Execution Policy & Budget Tracker (`ExecutionPolicy`, `ExecutionBudgetTracker`)**: Centralized enforcement of global request ceilings, per-parameter request limits, timeouts, cancellation controls, and sensitive parameter filtering (passwords, tokens, nonces).
+- **Engine Adapters (`SQLiExecutionAdapter`, `NoSQLiExecutionAdapter`)**: Typed adapters connecting shared execution lifecycles to Phase 4 and 5 error and differential detectors without duplicating classification logic.
+- **Test Execution Orchestrator (`TestExecutionOrchestrator`)**: Common lifecycle coordination: scope enforcement, candidate parameter extraction, baseline characterization, payload selection, isolated variant generation, bounded HTTP execution, and structured result collection. Supports offline response fixture analysis.
+- **CLI Payloads Command (`dbshield payloads`)**: Inspect, list, filter, validate, and export payload definitions.
+- **CLI Execute Command (`dbshield execute`)**: Controlled multi-engine security test execution across online targets and offline JSON response fixtures.
+- **Expanded Test Suite**: Added 55 new unit and integration tests (291 total tests passing 100%, 86% overall statement coverage, clean Ruff and Mypy).
+
+### Security
+- **Inert Data Guarantee**: Payloads exist as inert metadata and never independently trigger network traffic.
+- **Strict Scope Boundaries**: Rejects out-of-scope targets prior to any network dispatch.
+- **Defensive & Read-Only**: Strictly excludes data extraction, database dumping, authentication bypass, data destruction, and DoS timing probes.
+- **Sensitive Parameter Skipping**: Sensitive credentials (passwords, auth tokens, CSRF tokens, session IDs) are automatically skipped from payload delivery.
+- **Redaction Controls**: Secrets are redacted from logs, evidence snippets, and serialized execution results.
+- **Strict Request Ceilings**: All execution policies and request budgets are enforced at the execution layer.
 
 ### Added
 - **Phase 5 NoSQL Injection Detection Engine**: Dedicated defensive assessment engine for detecting document database syntax errors, driver exceptions, and operator differential signals.
