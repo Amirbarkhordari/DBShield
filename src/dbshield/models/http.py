@@ -142,7 +142,7 @@ class HTTPResponse(BaseModel):
         """Duck-typing property matching httpx.Response.content."""
         return self.content_bytes
 
-    def json(self, *args: Any, **kwargs: Any) -> Any:
+    def json(self, *_args: Any, **_kwargs: Any) -> Any:
         """Parse response body as JSON.
 
         Raises:

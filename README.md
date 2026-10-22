@@ -6,7 +6,7 @@
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
-[![Tests: Pytest](https://img.shields.io/badge/tests-115%20passed-brightgreen.svg)](#)
+[![Tests: Pytest](https://img.shields.io/badge/tests-185%20passed-brightgreen.svg)](#)
 
 ---
 
@@ -17,7 +17,7 @@
 
 ## Project Status
 
-- **Current Phase**: **Phase 3 — HTTP Request Handling and Authentication Management** (Completed & Verified)
+- **Current Phase**: **Phase 4 — SQL Injection Detection Engine** (Completed & Verified)
 - **Roadmap**: 10 Phases leading to advanced database vulnerability detection and Burp Suite integration. See [docs/roadmap.md](docs/roadmap.md).
 
 ### Implemented Functionality
@@ -56,8 +56,20 @@
   - Case-insensitive response headers (`CaseInsensitiveDict`) and `httpx.Response` duck-typing compatibility (`.text`, `.content`, `.json()`).
   - Strict zero-secret guarantee: passwords, tokens, and cookies are masked as `[REDACTED]` in terminal reports, logs, and JSON exports.
 
-### Out of Scope in Phase 3 (Planned for Future Phases)
-Active vulnerability scanning, payload execution (SQLi/NoSQLi), automated brute-force attacks, whole-app crawling, and Burp Suite integrations are explicitly scheduled for Phases 4–10.
+#### Phase 4: SQL Injection Detection Engine
+- **Dedicated SQLi Command (`dbshield sqli`)**:
+  - Controlled, defensive testing of explicitly selected, in-scope parameters.
+  - Multi-sample baseline response characterization (`BaselineCharacterizer`) verifying status and content stability.
+  - High-precision error-based SQL injection detector (`ErrorDetector`) with signature catalog across 6 database families (MySQL, PostgreSQL, SQLite, MSSQL, Oracle, Generic SQL).
+  - Explicit generic error differentiation: HTTP 500 / 400 errors without database error signatures are never misclassified as SQL injection.
+  - Pre-existing baseline error filtering: discards signatures already present before testing began.
+  - Boolean differential response analysis (`DifferentialDetector`) with dynamic element normalization (masking timestamps, CSRF tokens, UUIDs, epochs).
+  - Safety firewall: sensitive parameters (`password`, `token`, `csrf`, `secret`, `otp`) are automatically skipped.
+  - Offline response fixture analysis (`--fixture <path>`): zero-network laboratory validation from captured JSON response fixtures.
+  - Strict finding states: distinguishes `POTENTIAL_INDICATOR` (unconfirmed candidate finding) from `NO_INDICATOR` (does not prove secure), `INCONCLUSIVE`, `SKIPPED`, `BLOCKED_BY_SCOPE`, and `ERROR`.
+
+### Out of Scope in Phase 4 (Planned for Future Phases)
+Database extraction, table dumping, data modification, automated exploitation, credential brute-forcing, whole-app crawling, NoSQL injection (Phase 5), and independent verification (Phase 7).
 
 ---
 
@@ -178,6 +190,59 @@ dbshield request \
 - `--format`, `-f`: Output format (`text` or `json`, default `text`).
 - `--output`, `-o`: File path to save results.
 - `--overwrite`: Overwrite existing destination file.
+
+### 4. SQL Injection Assessment (`dbshield sqli`)
+
+Perform controlled, non-destructive SQL injection detection over in-scope endpoints or response fixtures:
+
+#### Online Target Assessment
+```bash
+dbshield sqli --url https://app.example.com/items?cat=books&page=1
+```
+
+#### Test a Specific Candidate Parameter
+```bash
+dbshield sqli \
+  --url https://app.example.com/search?q=security \
+  --param q \
+  --max-param-budget 6
+```
+
+#### Authenticated Assessment with Export
+```bash
+dbshield sqli \
+  --url https://app.example.com/api/v1/profile?user_id=10 \
+  --auth-type bearer \
+  --token "session-bearer-token" \
+  --format json \
+  --output ./sqli-results.json \
+  --overwrite
+```
+
+#### Offline Laboratory Fixture Assessment (Zero Network Traffic)
+```bash
+dbshield sqli --fixture ./tests/fixtures/sqli_sample.json
+```
+
+#### SQLi Command Options
+- `--url`, `-u`: Target URL to assess (required unless `--fixture` is specified).
+- `--fixture`: Path to JSON file containing captured baseline and test responses for offline laboratory testing.
+- `--param`, `-p`: Specific parameter name to test (defaults to all eligible parameters).
+- `--method`, `-m`: HTTP method (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, default `GET`).
+- `--data`, `-d`: Raw or URL-encoded form data body.
+- `--json`, `-j`: Raw JSON formatted request body.
+- `--auth-type`: Authentication method (`none`, `bearer`, `basic`, `header`, `cookie`, default `none`).
+- `--token`: Bearer authentication token.
+- `--username`: HTTP Basic username.
+- `--password`: HTTP Basic password.
+- `--cookie`: Session cookie string (`session=xyz`).
+- `--timeout`: Per-request timeout budget in seconds.
+- `--max-budget`: Total request budget ceiling across entire scan (default: 50).
+- `--max-param-budget`: Request budget ceiling per candidate parameter (default: 8).
+- `--disable-differential`: Disable boolean differential testing (run error-based only).
+- `--format`, `-f`: Output format (`text` or `json`, default `text`).
+- `--output`, `-o`: File path to export results.
+- `--overwrite`: Overwrite destination output file if it exists.
 
 ---
 

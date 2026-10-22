@@ -238,14 +238,84 @@ The Phase 3 HTTP layer provides a safe, reusable transport and session managemen
 
 ---
 
-## 6. Extension Points for Future Phases
+---
+
+## 6. SQL Injection Detection Engine (Phase 4)
+
+### 6.1 Architecture Overview
+
+The Phase 4 SQL Injection Detection Engine provides modular, defensive, and explainable vulnerability assessment routines:
+
+```
+                            CLI (`dbshield sqli`)
+                                      │
+                                      ▼
+                        Candidate Parameter Extraction
+                     (URL Query, Form Body, JSON Body)
+                                      │
+                                      ▼
+                            Safety & Scope Firewall
+              - ScopeManager.assert_in_scope()
+              - Ineligible Parameter Filter (Skip Passwords/Tokens)
+                                      │
+                                      ▼
+                           Baseline Characterization
+                   (2 Sample Probes, Stability Verification)
+                                      │
+                 ┌────────────────────┴────────────────────┐
+                 ▼                                         ▼
+         Stable Baseline                          Unstable Baseline
+                 │                               (Mark INCONCLUSIVE)
+                 ├─────────────────────────────────────────┐
+                 ▼                                         ▼
+        Error-Based Detector                     Differential Detector
+   (Match 6 Database Families               (Paired True/False Probes,
+    vs Baseline Error Catalog)                Volatile Token Masking)
+                 │                                         │
+                 └────────────────────┬────────────────────┘
+                                      │
+                                      ▼
+                             Construct Findings
+             (`POTENTIAL_INDICATOR`, `NO_INDICATOR`, `INCONCLUSIVE`)
+                                      │
+                                      ▼
+                          Terminal & JSON Reports
+```
+
+### 6.2 Key Abstractions
+
+1. **`SQLiEngine`**:
+   - Coordinates parameter extraction, scope pre-flight validation, and budget ceilings.
+   - Dispatches safe, read-only probes and collects structured findings.
+   - Supports offline response fixture analysis via `analyze_fixture_records()`.
+
+2. **`BaselineCharacterizer`**:
+   - Probes endpoints to profile status codes, content lengths, headers, and normalized body hashes.
+   - Detects status fluctuations or excessive response drift, flagging unstable baselines as `INCONCLUSIVE`.
+
+3. **`ResponseNormalizer`**:
+   - Deterministically masks volatile dynamic elements (ISO/RFC timestamps, UUIDs, CSRF tokens, epochs).
+   - Computes structural similarity ratios using `difflib.SequenceMatcher`.
+
+4. **`SignatureCatalog` & `ErrorDetector`**:
+   - Curated catalog for MySQL/MariaDB, PostgreSQL, SQLite, MSSQL, Oracle, and Generic ANSI SQL.
+   - Explicitly rejects generic HTTP 500/400 errors lacking database signatures.
+   - Discards pre-existing baseline errors to eliminate false positives.
+
+5. **`DifferentialDetector`**:
+   - Evaluates paired conditions (True vs False) against baseline.
+   - Flags candidate findings only when the True condition matches baseline and False condition stably diverges.
+
+---
+
+## 7. Extension Points for Future Phases
 
 | Phase | Module | Integration Point & Planned Responsibility | Status |
 | :--- | :--- | :--- | :--- |
 | **Phase 1: Foundation** | `dbshield.core` | Core models, ScopeManager, SafeHTTPClient, config, CLI foundation. | **Completed** |
 | **Phase 2: Login Discovery** | `dbshield.discovery` | Passive HTML login-page retrieval, form and input classification. | **Completed** |
 | **Phase 3: Auth & Sessions** | `dbshield.auth` / `dbshield.http` | Reusable HTTP layer, origin-isolated sessions, cookie jar, auth. | **Completed** |
-| **Phase 4: SQLi Engine** | `dbshield.engines.sqli` | Controlled SQL injection detection routines against target inputs. | Planned |
+| **Phase 4: SQLi Engine** | `dbshield.sqli` | Controlled SQL injection detection routines against target inputs. | **Completed** |
 | **Phase 5: NoSQLi Engine** | `dbshield.engines.nosqli` | Controlled NoSQL injection detection routines. | Planned |
 | **Phase 6: Payload Execution**| `dbshield.payloads` | Payload generation, mutation, and safe rate-limited delivery. | Planned |
 | **Phase 7: Evidence Analysis**| `dbshield.analysis` | Response anomaly detection, error pattern matching, differential analysis.| Planned |

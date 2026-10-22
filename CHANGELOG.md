@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-22
+
+### Added
+- **Phase 4 SQL Injection Detection Engine**: Initial defensive assessment engine for detecting database syntax errors and differential response signals.
+- **CLI SQLi Command (`dbshield sqli`)**: CLI entry point supporting target URLs, candidate parameter filtering, request budgets, authentication injection, JSON export, and offline fixture assessment.
+- **Offline Response Fixture Analysis**: Support for `--fixture <path>` enabling deterministic, zero-network laboratory validation from recorded JSON response fixtures.
+- **Baseline Response Characterization (`BaselineCharacterizer`)**: Profiles normal endpoint status, headers, body length, and elapsed time across multiple sample probes; flags status code variations or content drift as `INCONCLUSIVE`.
+- **Database Error Signature Catalog (`SignatureCatalog`)**: Compiled regular expressions detecting syntax errors across 6 database families (MySQL/MariaDB, PostgreSQL, SQLite, Microsoft SQL Server, Oracle, and Generic ANSI SQL).
+- **Generic Server Error Differentiation**: Distinguishes database-specific error indicators from generic HTTP 500 / 400 server failure responses (rejecting generic 500s as SQLi proof).
+- **Pre-Existing Error Filtering**: Discards error signatures that were already present in baseline responses, preventing false positives from pre-existing backend faults.
+- **Dynamic Element Normalization (`ResponseNormalizer`)**: Deterministically masks volatile dynamic elements (ISO/RFC timestamps, UUIDs, CSRF tokens, epochs) and computes structural similarity with `SequenceMatcher`.
+- **Boolean Differential Detector (`DifferentialDetector`)**: Compares paired logical condition responses against baseline; flags candidate findings when True condition matches baseline and False condition diverged.
+- **Candidate Parameter Metadata**: Tracks parameter name, location (query, body_urlencoded, body_json), method, content-type, eligibility, and skip reasons.
+- **Safety Firewall**: Sensitive controls (passwords, tokens, nonces, session identifiers) are automatically flagged ineligible and skipped.
+- **Structured Finding Models**: Pydantic models distinguishing `POTENTIAL_INDICATOR`, `NO_INDICATOR`, `INCONCLUSIVE`, `SKIPPED`, `BLOCKED_BY_SCOPE`, and `ERROR`.
+- **Signature Span Deduplication**: Interval-based span matching prevents redundant evidence records when signatures overlap on a single error while preserving distinct error occurrences.
+- **End-to-End POST Body Testing**: Validated URL-encoded form data and JSON body parameter testing with simulated endpoints.
+- **Expanded Test Suite**: Added 70 new unit and integration tests (185 total tests passing 100%, 0 lint errors).
+
+### Security
+- **Defensive Assessment Only**: Strictly prohibits database extraction, table dumping, data modification, automated exploitation, or denial-of-service timing queries.
+- **Zero-Credential Testing**: Passwords, auth tokens, and session nonces are excluded from test input delivery.
+- **Snippet Secret Redaction**: Response snippets captured in evidence records automatically redact passwords, API tokens, and session cookies.
+- **Request Budget Ceilings**: Strict per-parameter (`max_param_budget`) and per-scan (`max_budget`) ceilings prevent resource exhaustion.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

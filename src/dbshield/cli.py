@@ -35,6 +35,8 @@ from dbshield.models.discovery import DiscoveryResult, DiscoveryStatus
 from dbshield.models.http import HTTPMethod, HTTPResponse
 from dbshield.models.target import Target
 from dbshield.scope.manager import ScopeManager
+from dbshield.sqli.engine import SQLiEngine
+from dbshield.sqli.models import SQLiScanResult
 
 app = typer.Typer(
     name="dbshield",
@@ -924,6 +926,376 @@ def request_cmd(
 
     # 11. Render Output to Terminal
     if fmt == "json":
+        sys.stdout.write(json_output + "\n")
+    else:
+        sys.stdout.write(rendered_text + "\n")
+    sys.stdout.flush()
+
+    raise typer.Exit(code=0)
+
+
+def _format_sqli_report(result: SQLiScanResult) -> str:
+    """Format structured SQL injection assessment results for terminal output."""
+    lines = [
+        "=" * 80,
+        "                      SQL INJECTION DETECTION REPORT                            ",
+        "=" * 80,
+        f"  Target URL:             {result.target_url}",
+        f"  Scan ID:                {result.scan_id}",
+        f"  Execution Status:       {result.execution_status.upper()}",
+        f"  Total Duration:         {result.summary.duration_seconds:.3f}s",
+        f"  Total Requests:         {result.summary.total_requests}",
+        "-" * 80,
+        "  Parameter & Finding Metrics:",
+        f"    Total Parameters Evaluated:        {result.summary.total_parameters}",
+        f"    Parameters Actively Tested:        {result.summary.tested_parameters}",
+        f"    Parameters Skipped (Safety/Rules): {result.summary.skipped_parameters}",
+        f"    Potential Indicators Flagged:      {result.summary.potential_indicators}",
+        f"    Clean Parameters (No Indicator):   {result.summary.clean_parameters}",
+        f"    Inconclusive Tests:                {result.summary.inconclusive_parameters}",
+        f"    Blocked by Scope:                  {result.summary.blocked_parameters}",
+        f"    Transport / Operational Errors:    {result.summary.error_parameters}",
+    ]
+
+    if result.findings:
+        lines.extend(["-" * 80, "  Detailed Finding Records:"])
+        for idx, finding in enumerate(result.findings, start=1):
+            badge = f"[{finding.status.value.upper()}]"
+            conf = (
+                f" (Confidence: {finding.confidence.value.upper()})" if finding.confidence else ""
+            )
+            lines.append(
+                f"    {idx}. Parameter '{finding.parameter.name}' ({finding.parameter.location.value}) {badge}{conf}"
+            )
+            lines.append(f"       Technique:    {finding.technique.value}")
+            if finding.evidence_summary:
+                lines.append(f"       Summary:      {finding.evidence_summary}")
+            if finding.evidence_records:
+                for ev in finding.evidence_records:
+                    lines.append(f"       * Match [{ev.rule_id}]: {ev.description}")
+                    if ev.snippet:
+                        lines.append(f'         Snippet: "{ev.snippet}"')
+            if finding.error_or_skip_reason:
+                lines.append(f"       Reason:       {finding.error_or_skip_reason}")
+
+    if result.limitations:
+        lines.extend(["-" * 80, "  Framework Analytical Limitations:"])
+        for lim in result.limitations:
+            lines.append(f"    * {lim}")
+
+    lines.append("=" * 80)
+    return "\n".join(lines)
+
+
+@app.command(name="sqli")
+def sqli_cmd(
+    url: str | None = typer.Option(
+        None,
+        "--url",
+        "-u",
+        help="Target web application URL to assess.",
+    ),
+    param: str | None = typer.Option(
+        None,
+        "--param",
+        "-p",
+        help="Specific candidate parameter to test (defaults to all eligible parameters).",
+    ),
+    method: str = typer.Option(
+        "GET",
+        "--method",
+        "-m",
+        help="HTTP request method (GET, POST, PUT, PATCH, DELETE).",
+    ),
+    data: str | None = typer.Option(
+        None,
+        "--data",
+        "-d",
+        help="Raw or URL-encoded form data body.",
+    ),
+    json_data: str | None = typer.Option(
+        None,
+        "--json",
+        "-j",
+        help="JSON formatted request body (evaluates top-level keys; nested structures deferred to Phase 6).",
+    ),
+    fixture: str | None = typer.Option(
+        None,
+        "--fixture",
+        help="Path to JSON file containing captured baseline and test responses for offline testing.",
+    ),
+    auth_type: str = typer.Option(
+        "none",
+        "--auth-type",
+        help="Authentication method: none, bearer, basic, header, cookie.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        help="Bearer token (or DBSHIELD_AUTH_TOKEN env var).",
+    ),
+    username: str | None = typer.Option(
+        None,
+        "--username",
+        help="HTTP Basic username (or DBSHIELD_AUTH_USERNAME env var).",
+    ),
+    password: str | None = typer.Option(
+        None,
+        "--password",
+        help="HTTP Basic password (or DBSHIELD_AUTH_PASSWORD env var).",
+    ),
+    cookie: str | None = typer.Option(
+        None,
+        "--cookie",
+        help="Session cookie string (e.g., 'session=xyz').",
+    ),
+    timeout: float | None = typer.Option(
+        None,
+        "--timeout",
+        help="Per-request timeout budget in seconds.",
+    ),
+    max_budget: int = typer.Option(
+        50,
+        "--max-budget",
+        help="Maximum total request budget across entire scan.",
+    ),
+    max_param_budget: int = typer.Option(
+        8,
+        "--max-param-budget",
+        help="Maximum request budget per candidate parameter.",
+    ),
+    disable_differential: bool = typer.Option(
+        False,
+        "--disable-differential",
+        help="Disable boolean differential testing (run error-based only).",
+    ),
+    fmt: str = typer.Option(
+        "text",
+        "--format",
+        "-f",
+        help="Output format: text (human-readable table) or json.",
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Optional file path to export assessment results.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Overwrite destination output file if it already exists.",
+    ),
+) -> None:
+    """Assess web application targets or offline response fixtures for SQL injection indicators."""
+    fmt_clean = fmt.lower().strip()
+    if fmt_clean not in {"text", "json"}:
+        print_error(
+            f"Unsupported format '{fmt}'.",
+            cause="DBShield supports only 'text' or 'json' output formats.",
+            remedy="Specify --format text or --format json.",
+        )
+        raise typer.Exit(code=2)
+
+    # 1. Handle Offline Fixture Assessment Mode
+    if fixture is not None:
+        fixture_path = Path(fixture)
+        if not fixture_path.is_file():
+            print_error(
+                f"Fixture file '{fixture}' not found.",
+                cause="The specified fixture path does not point to an existing readable file.",
+                remedy="Provide a valid path to a JSON response fixture file.",
+            )
+            raise typer.Exit(code=2)
+
+        try:
+            fixture_data = json.loads(fixture_path.read_text(encoding="utf-8"))
+            target_url = fixture_data.get("target_url", "http://laboratory.local/fixture")
+            p_name = fixture_data.get("parameter", param or "id")
+
+            base_info = fixture_data.get("baseline", {})
+            test_info = fixture_data.get("test", {})
+
+            base_resp = HTTPResponse(
+                url=target_url,
+                status_code=base_info.get("status_code", 200),
+                body=base_info.get("body", ""),
+            )
+            test_resp = HTTPResponse(
+                url=target_url,
+                status_code=test_info.get("status_code", 200),
+                body=test_info.get("body", ""),
+            )
+
+            true_resp = None
+            false_resp = None
+            if "true_response" in fixture_data and "false_response" in fixture_data:
+                true_info = fixture_data["true_response"]
+                false_info = fixture_data["false_response"]
+                true_resp = HTTPResponse(
+                    url=target_url,
+                    status_code=true_info.get("status_code", 200),
+                    body=true_info.get("body", ""),
+                )
+                false_resp = HTTPResponse(
+                    url=target_url,
+                    status_code=false_info.get("status_code", 200),
+                    body=false_info.get("body", ""),
+                )
+
+            print_info(f"Analyzing offline response fixtures from '{fixture_path}'...")
+            result = SQLiEngine.analyze_fixture_records(
+                target_url=target_url,
+                param_name=p_name,
+                baseline_response=base_resp,
+                test_response=test_resp,
+                true_response=true_resp,
+                false_response=false_resp,
+            )
+        except Exception as exc:
+            print_error(
+                "Failed to process fixture file.",
+                cause=str(exc),
+                remedy="Verify that the fixture file contains valid JSON matching DBShield fixture structure.",
+            )
+            raise typer.Exit(code=1) from exc
+
+    # 2. Handle Online Target Assessment Mode
+    else:
+        if not url:
+            print_error(
+                "Missing required target specification.",
+                cause="Neither --url nor --fixture was provided.",
+                remedy="Specify target URL via --url <URL> or offline fixture via --fixture <PATH>.",
+            )
+            raise typer.Exit(code=2)
+
+        # Validate URL
+        try:
+            target = Target.from_url(url)
+        except URLValidationError as exc:
+            print_error(exc.message, cause=exc.cause, remedy=exc.remedy)
+            raise typer.Exit(code=2) from exc
+
+        # Initialize ScopeManager and assert scope
+        settings = get_settings()
+        scope_manager = ScopeManager(
+            allowed_hosts=settings.allowed_hosts,
+            allow_subdomains=settings.allow_subdomains,
+            strict_mode=bool(settings.allowed_hosts),
+        )
+        try:
+            scope_manager.assert_in_scope(target)
+        except ScopeViolationError as exc:
+            print_error(
+                f"Target host '{target.host}' is not within authorized scope.",
+                cause=exc.cause or "Host does not match any entry in allowed_hosts.",
+                remedy=exc.remedy
+                or "Configure DBSHIELD_ALLOWED_HOSTS to authorize target before scanning.",
+            )
+            raise typer.Exit(code=2) from exc
+
+        # Authentication Configuration
+        effective_token = token or os.environ.get("DBSHIELD_AUTH_TOKEN")
+        effective_username = username or os.environ.get("DBSHIELD_AUTH_USERNAME")
+        effective_password = password or os.environ.get("DBSHIELD_AUTH_PASSWORD")
+
+        try:
+            auth_mode = AuthType(auth_type.lower())
+        except ValueError:
+            print_error(
+                f"Invalid auth-type '{auth_type}'.",
+                cause=f"'{auth_type}' is not a recognized authentication method.",
+                remedy="Supported methods: none, bearer, basic, header, cookie.",
+            )
+            raise typer.Exit(code=2) from None
+
+        try:
+            auth_config = AuthConfig(
+                auth_type=auth_mode,
+                token=effective_token,
+                username=effective_username,
+                password=effective_password,
+                cookies={"session": cookie} if cookie else {},
+            )
+        except ValueError as exc:
+            print_error(
+                "Invalid authentication configuration parameters.",
+                cause=str(exc),
+                remedy="Check required credentials for the chosen auth mode.",
+            )
+            raise typer.Exit(code=2) from exc
+
+        session_mgr = SessionManager(auth_config=auth_config)
+        session_mgr.bind_target(target)
+
+        effective_timeout = timeout if timeout is not None else settings.http_timeout
+        http_client = SafeHTTPClient(
+            scope_manager=scope_manager,
+            timeout=effective_timeout,
+            session_manager=session_mgr,
+        )
+
+        engine = SQLiEngine(
+            scope_manager=scope_manager,
+            http_client=http_client,
+            session_manager=session_mgr,
+            max_requests_per_parameter=max_param_budget,
+            total_request_budget=max_budget,
+            enable_differential=not disable_differential,
+        )
+
+        print_info(f"Initiating controlled SQL injection assessment on: {target.full_url}")
+        try:
+            result = engine.scan(
+                target_url=target,
+                method=method,
+                selected_param=param,
+                data=data,
+                json_data=json_data,
+            )
+        except Exception as exc:
+            print_error(
+                "Operational failure during SQL injection scan.",
+                cause=str(exc),
+                remedy="Review network connectivity, target availability, and configuration.",
+            )
+            raise typer.Exit(code=1) from exc
+
+    # 3. Format Output
+    rendered_text = _format_sqli_report(result)
+    json_output = result.model_dump_json(indent=2)
+
+    # 4. Handle Output Export
+    if output is not None:
+        out_path = Path(output)
+        if out_path.exists() and not overwrite:
+            print_error(
+                f"Output destination '{output}' already exists.",
+                cause="Target file exists and --overwrite was not specified.",
+                remedy="Provide a different output path or specify --overwrite to replace it.",
+            )
+            raise typer.Exit(code=1)
+
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            if fmt_clean == "json" or out_path.suffix.lower() == ".json":
+                out_path.write_text(json_output, encoding="utf-8")
+            else:
+                out_path.write_text(rendered_text, encoding="utf-8")
+            print_success(
+                f"SQL injection assessment results successfully exported to '{out_path}'."
+            )
+        except Exception as exc:
+            print_error(
+                f"Failed to write assessment results to '{out_path}'.",
+                cause=str(exc),
+                remedy="Verify write permissions and disk space for destination path.",
+            )
+            raise typer.Exit(code=1) from exc
+
+    # 5. Render Output to Terminal
+    if fmt_clean == "json":
         sys.stdout.write(json_output + "\n")
     else:
         sys.stdout.write(rendered_text + "\n")

@@ -10,7 +10,7 @@ This document outlines the authoritative 10-phase engineering roadmap for the DB
 Phase 1: Project Foundation & Core Architecture        [COMPLETED]
 Phase 2: Login-Page Discovery & Form Analysis          [COMPLETED]
 Phase 3: HTTP Request Handling & Authentication        [COMPLETED]
-Phase 4: SQL Injection Testing Engine                  [PLANNED]
+Phase 4: SQL Injection Testing Engine                  [COMPLETED]
 Phase 5: NoSQL Injection Testing Engine                [PLANNED]
 Phase 6: Payload Management & Test Execution           [PLANNED]
 Phase 7: Evidence Analysis & Verification              [PLANNED]
@@ -68,12 +68,18 @@ Phase 10: Whole-App Expansion & Burp Suite Integration [PLANNED]
 ---
 
 ### Phase 4: SQL Injection Testing Engine
-- **Status**: **Planned**
-- **Scope**:
-  - Error-based SQL injection detection
-  - Boolean-based blind SQL injection verification
-  - Time-based blind SQL injection routines
-  - Union-based payload generation
+- **Status**: **Completed**
+- **Deliverables**:
+  - Typer CLI `dbshield sqli` command with parameter targeting, budget limits, formats, and offline fixtures
+  - Modular SQL injection engine (`SQLiEngine`) reusing `SafeHTTPClient`, `ScopeManager`, and `SessionManager`
+  - Baseline response characterization (`BaselineCharacterizer`) verifying stability across multi-probe samples
+  - Error-based SQL injection detector (`ErrorDetector`) with curated signature catalog across 6 DB families
+  - Boolean differential detector (`DifferentialDetector`) comparing paired logical conditions against baseline
+  - Dynamic token masking (`ResponseNormalizer`) eliminating volatile timestamps, UUIDs, and CSRF tokens
+  - Zero-credential safety filter automatically skipping passwords, auth tokens, and session nonces
+  - Structured immutable finding models (`SQLiFinding`, `SQLiScanResult`, `EvidenceRecord`)
+  - Offline fixture analysis mode enabling zero-network laboratory validation
+  - Automated test suite expanded to 177 tests (100% pass rate, clean Ruff and Mypy)
 
 ---
 

@@ -10,8 +10,6 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
-
 from dbshield.discovery.classifier import DiscoveryClassifier
 from dbshield.discovery.parser import HTMLFormParser
 from dbshield.exceptions import (
