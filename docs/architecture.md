@@ -1,6 +1,6 @@
 # DBShield Architecture Specification
 
-This document details the architectural design, module responsibilities, core abstractions, and extension points of the DBShield framework.
+This document details the architectural design, module responsibilities, core abstractions, data flow, and extension points of the DBShield framework.
 
 ---
 
@@ -8,9 +8,11 @@ This document details the architectural design, module responsibilities, core ab
 
 DBShield is engineered as a **modular, extensible security framework**, not a collection of ad-hoc testing scripts. Its design emphasizes:
 
-1. **Decoupled Responsibilities**: Presentation (CLI), business logic (models/scope), configuration, and I/O (HTTP) are strictly separated.
-2. **Safety by Design**: Network requests cannot occur without passing through the `ScopeManager`, preventing accidental out-of-scope traffic.
-3. **Extensibility for Multi-Phase Progression**: Phase 1 provides foundational hooks for Phase 2 (discovery), Phase 3 (authentication), and Phase 4/5 (SQLi/NoSQLi engines) without premature complexity.
+1. **Decoupled Responsibilities**: Presentation (CLI), business logic (models/scope/classification), HTML parsing, configuration, and I/O (HTTP) are strictly isolated.
+2. **Safety by Design**: Network requests cannot occur without passing through the `ScopeManager`, preventing accidental out-of-scope traffic. Form action URLs are evaluated against scope rules without sending any requests to them.
+3. **Zero Credential Collection**: Discovery analyzes structural input points and form controls without storing real passwords, session secrets, or personal data.
+4. **Explainable Heuristics**: Classification decisions provide transparent confidence scores and evidence trails.
+5. **Extensibility for Multi-Phase Progression**: Phase 1 established foundational infrastructure; Phase 2 built the discovery engine; subsequent phases build request handling (Phase 3) and controlled database security engines (Phases 4–5).
 
 ---
 
@@ -20,24 +22,30 @@ DBShield is engineered as a **modular, extensible security framework**, not a co
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          PRESENTATION LAYER                             │
 │                  (Typer CLI: dbshield.cli, __main__)                    │
-│   Commands: doctor, inspect, info, --version, (future: scan, report)    │
+│      Commands: doctor, inspect, info, discover, --version               │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │ Invokes
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         CORE & DOMAIN MODELS                            │
-│           (dbshield.models.target, dbshield.models.scan)                │
-│    - Target: URL normalization, scheme & port validation                │
-│    - Scan: Session lifecycle, test counters, execution state            │
+│                         DISCOVERY LAYER                                 │
+│                 (dbshield.discovery, dbshield.models.discovery)         │
+│  ┌───────────────────────┐  ┌───────────────────────┐                   │
+│  │    HTMLFormParser     │  │  DiscoveryClassifier  │                   │
+│  │ (DOM & Form Control)  │  │ (Rule-Based Heuristic)│                   │
+│  └───────────┬───────────┘  └───────────┬───────────┘                   │
+│              └─────────────┬────────────┘                               │
+│                            ▼                                            │
+│                     DiscoveryEngine                                     │
+│          (Orchestrates Retrieval & Classification)                      │
 └───────────────────┬────────────────────────────────┬────────────────────┘
-                    │ Validated by                   │ Ingests
+                    │                                │
                     ▼                                ▼
 ┌──────────────────────────────────────┐   ┌──────────────────────────────┐
 │        SCOPE ENFORCEMENT             │   │   CONFIGURATION & LOGGING    │
 │    (dbshield.scope.manager)          │   │  (dbshield.config, logging)  │
 │  - Exact host matching               │   │  - Pydantic Settings         │
 │  - Subdomain allowlist policy        │   │  - Redaction filter          │
-│  - Redirect pre-validation           │   │  - Structured 3-part errors  │
+│  - Redirect & Action pre-validation  │   │  - Structured 3-part errors  │
 └───────────────────┬──────────────────┘   └──────────────────────────────┘
                     │ Governs
                     ▼
@@ -46,7 +54,7 @@ DBShield is engineered as a **modular, extensible security framework**, not a co
 │                    (dbshield.http.SafeHTTPClient)                       │
 │    - httpx wrapper with timeout budgets & redirect limits               │
 │    - Intercepts every redirect hop to enforce scope revalidation        │
-│    - Dependency injection for unit & integration testing                │
+│    - Zero automatic form submission or website crawling                 │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -57,6 +65,7 @@ DBShield is engineered as a **modular, extensible security framework**, not a co
 ### 3.1 `dbshield.config`
 - Manages centralized settings using `pydantic-settings.BaseSettings`.
 - Reads operational limits from environment variables (`DBSHIELD_*`) and optional `.env` files.
+- Employs `LenientEnvSettingsSource` to allow either comma-separated strings or JSON arrays for `allowed_hosts`.
 - Provides `get_safe_dict()` to present sanitized configuration views without secret leakage.
 
 ### 3.2 `dbshield.models.target`
@@ -69,31 +78,108 @@ DBShield is engineered as a **modular, extensible security framework**, not a co
 - Tracks `ScanProfile` (Passive, Discovery, Standard, Aggressive) and `ScanStatus` (Pending, Initialized, Running, Completed, Failed, Aborted).
 - Tracks planned vs executed test counters.
 
-### 3.4 `dbshield.scope.manager`
+### 3.4 `dbshield.models.discovery`
+- `FieldClassification`: Rule-based enum (`USERNAME`, `EMAIL`, `PASSWORD`, `OTP`, `CSRF_TOKEN`, `HIDDEN`, `GENERIC_INPUT`, `SUBMIT`, `UNKNOWN`).
+- `PageClassification`: Overall page assessment enum (`LOGIN_FORM_DETECTED`, `MULTIPLE_LOGIN_FORMS`, `LOGIN_INPUTS_WITHOUT_FORM`, `NO_LOGIN_FORM_DETECTED`, `PAGE_COULD_NOT_BE_ANALYZED`, `PAGE_INACCESSIBLE_OR_BLOCKED`).
+- `DiscoveryStatus`: Execution outcome enum (`COMPLETED`, `COMPLETED_WITH_WARNINGS`, `FAILED`, `BLOCKED_BY_SCOPE`).
+- `InputField`: Detailed model for input controls, element tags, attributes, labels, required flags, confidence, and evidence. Values of sensitive fields are never collected.
+- `DiscoveredForm`: Form model storing declared and resolved actions, HTTP methods, encodings, controls, query parameters, duplicate names, same-origin flags, and scope authorization status.
+- `DiscoverySummary`: Aggregated metrics of discovered forms, login candidates, candidate fields, passwords, usernames, and CSRF tokens.
+- `DiscoveryResult`: Complete immutable result model, fully serializable to valid JSON via `model_dump_json()`.
+
+### 3.5 `dbshield.scope.manager`
 - Serves as the central authorization firewall of the application.
 - Supports exact host matching and optional subdomain recursion (`allow_subdomains=True`).
 - Rejects similarly-named attacker domains (`example.com.attacker.com`, `attacker-example.com`).
 - Pre-validates redirect destinations before they can be followed.
+- Evaluates discovered form action URLs to determine whether they are in-scope without sending network traffic.
 
-### 3.5 `dbshield.http.client`
+### 3.6 `dbshield.http.client`
 - Wraps `httpx.Client` to enforce pre-request scope checks.
 - Intercepts 3xx responses and re-validates `Location` headers against `ScopeManager`.
 - Enforces timeout budgets and redirect hop limits.
 - Supports dependency injection (`client` or `transport`) to enable complete offline mock testing.
 
-### 3.6 `dbshield.logging_config`
-- Implements `SensitiveDataFilter` to scrub bearer tokens, cookies, passwords, JWTs, and API keys from log streams.
-- Formats logs with timestamps, module names, severities, and correlation IDs.
+### 3.7 `dbshield.discovery.parser` (`HTMLFormParser`)
+- Parses HTML documents using BeautifulSoup with `html.parser` for high fault tolerance.
+- Extracts page title and query parameters from base URL and action URLs.
+- Associates `<label for="...">` and wrapping `<label>` texts with their controls.
+- Normalizes relative form actions against document base URL using `urljoin`.
+- Strips non-transmittable URL fragments (`#...`).
+- Defaults missing or empty form actions to the current page URL per HTML specification.
+- Discovers formless / orphan input controls rendered outside formal `<form>` tags.
+- Detects duplicate input control names.
+
+### 3.8 `dbshield.discovery.classifier` (`DiscoveryClassifier`)
+- Completely decoupled from HTML parsing to allow independent rule additions.
+- Employs word-boundary regular expressions and token normalization (hyphens/underscores/dots converted to tokens).
+- Classifies controls into explicit categories with confidence ratings (0.0 to 1.0) and evidence strings.
+- Form classification evaluates credential controls, CSRF tokens, action keywords, and submit button texts while penalizing registration/search forms.
+- Compares origin between document URL and form action URL to detect cross-origin submissions.
+- Aggregates form and orphan input findings to classify the overall page.
+
+### 3.9 `dbshield.discovery.engine` (`DiscoveryEngine`)
+- Orchestrates the full Phase 2 discovery lifecycle:
+  1. Validates target URL syntax.
+  2. Asserts target host is within authorized scope.
+  3. Executes a single safe GET request via `SafeHTTPClient`.
+  4. Passes response body to `HTMLFormParser`.
+  5. Passes parsed DOM structures to `DiscoveryClassifier`.
+  6. Evaluates each form action URL with `ScopeManager.is_url_in_scope()`—flagging out-of-scope actions and guaranteeing zero requests are dispatched to them.
+  7. Calculates summary metrics and builds the immutable `DiscoveryResult`.
 
 ---
 
-## 4. Extension Points for Future Phases
+## 4. Discovery Data Flow
 
-| Future Phase | Integration Point | Planned Responsibility |
-| :--- | :--- | :--- |
-| **Phase 2: Login Discovery** | `dbshield.discovery` | Analyzes target HTML for login forms, input fields, and endpoints using `SafeHTTPClient`. |
-| **Phase 3: Auth & Sessions** | `dbshield.auth` | Manages authenticated sessions, cookie stores, and CSRF token handling. |
-| **Phase 4: SQLi Engine** | `dbshield.engines.sqli` | Executes controlled SQL injection detection routines against target inputs. |
-| **Phase 5: NoSQLi Engine** | `dbshield.engines.nosqli` | Executes NoSQL (MongoDB, CouchDB) injection detection routines. |
-| **Phase 8: Reporting** | `dbshield.reporting` | Generates structured JSON, HTML, and Markdown assessment summaries. |
-| **Phase 10: Burp Suite** | `dbshield.integrations` | Upstream proxy adapters and Burp Suite extension bindings. |
+```
+User CLI Input: `dbshield discover --url <URL>`
+      │
+      ▼
+Target.from_url(URL) -> URL Validation & Scheme Enforcement
+      │
+      ▼
+ScopeManager.assert_in_scope(Target)
+      │
+      ├─[Out of Scope]──> Returns BLOCKED_BY_SCOPE (Exit Code 2)
+      │
+      ▼ [In Scope]
+SafeHTTPClient.get(Target) -> Single HTTP Request with Redirect Interception
+      │
+      ├─[Network / Timeout Error]──> Returns FAILED (Exit Code 1)
+      │
+      ▼ [200 OK HTML]
+HTMLFormParser.parse(html, base_url)
+      │ Forms, Controls, Query Params, Orphan Inputs
+      ▼
+DiscoveryClassifier.classify_control() & classify_form()
+      │
+      ▼
+ScopeManager.is_url_in_scope(action_url)  <-- Evaluates action boundary
+      │
+      ▼
+DiscoveryClassifier.classify_page()
+      │
+      ▼
+Construct DiscoveryResult
+      │
+      ├──> CLI Terminal Summary (stderr diagnostics, stdout report)
+      └──> JSON Export (--format json or --output <path>)
+```
+
+---
+
+## 5. Extension Points for Future Phases
+
+| Phase | Module | Integration Point & Planned Responsibility | Status |
+| :--- | :--- | :--- | :--- |
+| **Phase 1: Foundation** | `dbshield.core` | Core models, ScopeManager, SafeHTTPClient, config, CLI foundation. | **Completed** |
+| **Phase 2: Login Discovery** | `dbshield.discovery` | Passive HTML login-page retrieval, form and input classification. | **Completed** |
+| **Phase 3: Auth & Sessions** | `dbshield.auth` | Session persistence, cookie jars, header manipulation, re-auth. | Planned |
+| **Phase 4: SQLi Engine** | `dbshield.engines.sqli` | Controlled SQL injection detection routines against target inputs. | Planned |
+| **Phase 5: NoSQLi Engine** | `dbshield.engines.nosqli` | Controlled NoSQL injection detection routines. | Planned |
+| **Phase 6: Payload Execution**| `dbshield.payloads` | Payload generation, mutation, and safe rate-limited delivery. | Planned |
+| **Phase 7: Evidence Analysis**| `dbshield.analysis` | Response anomaly detection, error pattern matching, differential analysis.| Planned |
+| **Phase 8: Reporting** | `dbshield.reporting` | Formatted JSON, HTML, and Markdown assessment summaries. | Planned |
+| **Phase 9: Lab Validation** | `tests.lab` | Automated test suite execution against isolated test targets. | Planned |
+| **Phase 10: Burp Suite** | `dbshield.integrations` | Upstream proxy adapters and Burp Suite extension bindings. | Planned |

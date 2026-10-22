@@ -6,7 +6,7 @@
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
-[![Tests: Pytest](https://img.shields.io/badge/tests-45%20passed-brightgreen.svg)](#)
+[![Tests: Pytest](https://img.shields.io/badge/tests-77%20passed-brightgreen.svg)](#)
 
 ---
 
@@ -17,23 +17,37 @@
 
 ## Project Status
 
-- **Current Phase**: **Phase 1 — Project Foundation and Core Architecture** (Completed & Verified)
+- **Current Phase**: **Phase 2 — Login Page Discovery Engine** (Completed & Verified)
 - **Roadmap**: 10 Phases leading to advanced database vulnerability detection and Burp Suite integration. See [docs/roadmap.md](docs/roadmap.md).
 
-### Implemented Functionality (Phase 1)
-- **Standard Python Package & CLI**: Installable package (`dbshield`) built with Typer following Linux CLI standards.
-- **Centralized Configuration**: `pydantic-settings` with environment variable validation and safe parameter exposure.
+### Implemented Functionality
+
+#### Phase 1: Foundation and Core Architecture
+- **Standard Python Package & CLI**: Installable package (`dbshield`) built with Typer following Linux CLI design standards.
+- **Centralized Configuration**: `pydantic-settings` with environment variable validation, lenient list parsing, and safe parameter exposure.
 - **Foundational Data Models**: Validated `Target` and `Scan` domain models with strict URL normalization and port/scheme validation.
 - **Target Scope Management**: Robust `ScopeManager` enforcing exact host matching, subdomain policy guards, similarly-named attacker domain rejections, and redirect destination pre-validation.
 - **Safe Scope-Aware HTTP Client**: Built on `httpx` with timeout budgets, redirect limits, pre-flight scope assertions, and sensitive-data redaction.
-- **Centralized Logging & Redaction**: Automated scrubbing of passwords, authorization tokens, cookies, JWTs, and GitHub tokens from log outputs.
-- **Diagnostic & Inspection Commands**:
+- **Centralized Logging & Redaction**: Automated scrubbing of passwords, authorization tokens, cookies, JWTs, and API tokens from log outputs.
+- **Diagnostic Commands**:
   - `dbshield doctor`: Environment, Python runtime, and configuration readiness checks.
   - `dbshield info`: Safe configuration summary and runtime metadata.
   - `dbshield inspect --url <URL>`: Passive URL syntax and scope evaluation (zero network calls).
 
-### Out of Scope in Phase 1 (Planned for Future Phases)
-Active vulnerability scanning, payload execution (SQLi/NoSQLi), crawling, authentication workflows, report generation, and Burp Suite integrations are explicitly scheduled for Phases 2–10.
+#### Phase 2: Login Page Discovery Engine
+- **Dedicated Discovery Command (`dbshield discover`)**:
+  - Validates URL syntax and scope authorization before any network transmission.
+  - Safe, minimal page retrieval using the scope-enforcing `SafeHTTPClient`.
+  - Tolerant HTML parsing (`HTMLFormParser`) extracting forms, actions, methods, encodings, and control inventories.
+  - Resolves relative form actions, strips non-transmittable URL fragments, and defaults missing actions to the document URL per HTML standards.
+  - Rule-based heuristic classification (`DiscoveryClassifier`) identifying username, email, password, OTP, and anti-CSRF fields.
+  - Explanatory page classification (`LOGIN_FORM_DETECTED`, `MULTIPLE_LOGIN_FORMS`, `LOGIN_INPUTS_WITHOUT_FORM`, `NO_LOGIN_FORM_DETECTED`).
+  - Action destination boundary validation: detects out-of-scope actions and marks them without sending any requests to them.
+  - Rich human-readable terminal reports and deterministic machine-readable JSON exports (`--format json`, `--output <path>`, `--overwrite`).
+  - Strict zero-credential safety: no collection of secret values, no active form submission, zero crawler behavior, zero payload execution.
+
+### Out of Scope in Phase 2 (Planned for Future Phases)
+Active vulnerability scanning, payload execution (SQLi/NoSQLi), whole-app crawling, authentication session persistence, and Burp Suite integrations are explicitly scheduled for Phases 3–10.
 
 ---
 
@@ -89,6 +103,29 @@ Performs passive URL validation, scheme verification, and scope evaluation witho
 dbshield inspect --url https://example.com/login?service=auth
 ```
 
+### 5. Discover and Analyze Login Page (`discover`)
+
+#### Human-Readable Terminal Summary
+```bash
+dbshield discover --url https://app.example.com/login
+```
+
+#### Export Structured Machine-Readable JSON
+```bash
+dbshield discover \
+  --url https://app.example.com/login \
+  --format json \
+  --output ./discovery-results.json \
+  --overwrite
+```
+
+#### Command Options
+- `--url`, `-u`: Required target URL to analyze.
+- `--format`, `-f`: Output format (`text` or `json`, default `text`).
+- `--output`, `-o`: File path to save discovery output.
+- `--overwrite`: Overwrite existing output file safely.
+- `--timeout`, `-t`: Override default request timeout budget in seconds.
+
 ---
 
 ## Configuration
@@ -103,7 +140,7 @@ Configuration is managed via environment variables or a local `.env` file (see `
 | `DBSHIELD_LOG_LEVEL` | Log severity (DEBUG, INFO, WARN, ERROR) | `INFO` |
 | `DBSHIELD_LOG_FILE` | Optional path to write log file | `None` |
 | `DBSHIELD_DATA_DIR` | Local cache and session storage directory | `~/.local/share/dbshield` |
-| `DBSHIELD_ALLOWED_HOSTS` | JSON array of authorized domains/hosts | `[]` |
+| `DBSHIELD_ALLOWED_HOSTS` | List or comma-separated string of authorized hosts | `[]` |
 | `DBSHIELD_ALLOW_SUBDOMAINS`| Whether subdomains are in-scope | `false` |
 | `DBSHIELD_RATE_LIMIT` | Max requests per second | `10.0` |
 
@@ -111,7 +148,7 @@ Configuration is managed via environment variables or a local `.env` file (see `
 
 ## Development and Testing
 
-Execute the test suite (45 unit and integration tests):
+Execute the test suite (77 unit and integration tests):
 ```bash
 pytest
 ```
@@ -146,21 +183,27 @@ dbshield/
 │   ├── development.md        # Contributor and development workflow
 │   ├── roadmap.md            # 10-phase project evolution roadmap
 │   └── phases/
-│       └── phase-01.md       # Phase 1 completion and verification report
+│       ├── phase-01.md       # Phase 1 completion and verification report
+│       └── phase-02.md       # Phase 2 completion and verification report
 ├── src/
 │   └── dbshield/
 │       ├── __init__.py       # Package metadata
 │       ├── __main__.py       # Module entry point
-│       ├── cli.py            # Typer CLI interface
+│       ├── cli.py            # Typer CLI interface (doctor, inspect, info, discover)
 │       ├── config.py         # Pydantic Settings management
 │       ├── exceptions.py     # Structured exception hierarchy
 │       ├── logging_config.py # Structured logging and secret redaction
-│       ├── models/           # Domain data models (Target, Scan)
+│       ├── models/           # Domain data models (Target, Scan, Discovery)
 │       ├── scope/            # ScopeManager boundary enforcement
-│       └── http/             # Scope-aware SafeHTTPClient
+│       ├── http/             # Scope-aware SafeHTTPClient
+│       └── discovery/        # Login Page Discovery Engine
+│           ├── __init__.py   # Discovery package exports
+│           ├── parser.py     # Tolerant HTML form & control parser
+│           ├── classifier.py # Rule-based heuristic classification
+│           └── engine.py     # Discovery workflow orchestrator
 └── tests/
-    ├── unit/                 # Unit tests (config, models, scope, logging, cli)
-    └── integration/          # HTTP client integration tests with mock transport
+    ├── unit/                 # Unit tests (config, models, scope, logging, cli, parser, classifier)
+    └── integration/          # Integration tests (HTTP client, discovery engine, CLI discover)
 ```
 
 ---

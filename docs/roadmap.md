@@ -8,7 +8,7 @@ This document outlines the authoritative 10-phase engineering roadmap for the DB
 
 ```
 Phase 1: Project Foundation & Core Architecture        [COMPLETED]
-Phase 2: Login-Page Discovery & Form Analysis          [PLANNED]
+Phase 2: Login-Page Discovery & Form Analysis          [COMPLETED]
 Phase 3: HTTP Request Handling & Authentication        [PLANNED]
 Phase 4: SQL Injection Testing Engine                  [PLANNED]
 Phase 5: NoSQL Injection Testing Engine                [PLANNED]
@@ -39,12 +39,16 @@ Phase 10: Whole-App Expansion & Burp Suite Integration [PLANNED]
 ---
 
 ### Phase 2: Login-Page Discovery and Form Analysis
-- **Status**: **Planned** (Requires Phase 1 approval)
-- **Scope**:
-  - Passive and active discovery of authentication endpoints
-  - HTML form parsing (inputs, actions, methods, CSRF tokens)
-  - API endpoint detection (JSON authentication routes)
-  - Input field classification (username, password, parameters)
+- **Status**: **Completed**
+- **Deliverables**:
+  - Typer CLI `dbshield discover` command with `--format` (`text`, `json`) and `--output` options
+  - Tolerant HTML parser (`HTMLFormParser`) handling forms, actions, methods, encodings, and orphan controls
+  - Relative action normalization, missing action document defaults, and URL fragment stripping
+  - Rule-based heuristic classifier (`DiscoveryClassifier`) identifying usernames, emails, passwords, OTPs, and CSRF tokens
+  - Origin comparison (same-origin vs cross-origin) and out-of-scope action detection without sending requests
+  - Validated Pydantic models: `DiscoveryResult`, `DiscoveredForm`, `InputField`, `DiscoverySummary`
+  - Automated test suite expanded to 77 tests (100% pass, clean Ruff and Mypy)
+  - Zero-credential safety, zero form submissions, zero active payload execution
 
 ---
 
