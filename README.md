@@ -6,7 +6,7 @@
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
-[![Tests: Pytest](https://img.shields.io/badge/tests-77%20passed-brightgreen.svg)](#)
+[![Tests: Pytest](https://img.shields.io/badge/tests-115%20passed-brightgreen.svg)](#)
 
 ---
 
@@ -17,7 +17,7 @@
 
 ## Project Status
 
-- **Current Phase**: **Phase 2 — Login Page Discovery Engine** (Completed & Verified)
+- **Current Phase**: **Phase 3 — HTTP Request Handling and Authentication Management** (Completed & Verified)
 - **Roadmap**: 10 Phases leading to advanced database vulnerability detection and Burp Suite integration. See [docs/roadmap.md](docs/roadmap.md).
 
 ### Implemented Functionality
@@ -44,10 +44,20 @@
   - Explanatory page classification (`LOGIN_FORM_DETECTED`, `MULTIPLE_LOGIN_FORMS`, `LOGIN_INPUTS_WITHOUT_FORM`, `NO_LOGIN_FORM_DETECTED`).
   - Action destination boundary validation: detects out-of-scope actions and marks them without sending any requests to them.
   - Rich human-readable terminal reports and deterministic machine-readable JSON exports (`--format json`, `--output <path>`, `--overwrite`).
-  - Strict zero-credential safety: no collection of secret values, no active form submission, zero crawler behavior, zero payload execution.
 
-### Out of Scope in Phase 2 (Planned for Future Phases)
-Active vulnerability scanning, payload execution (SQLi/NoSQLi), whole-app crawling, authentication session persistence, and Burp Suite integrations are explicitly scheduled for Phases 3–10.
+#### Phase 3: HTTP Request Handling and Authentication Management
+- **Dedicated Request Command (`dbshield request`)**:
+  - Controlled, scope-verified outbound HTTP requests with explicit method configuration (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS).
+  - Configurable request headers, query parameters, form data, and JSON payloads.
+  - Authentication profiles: unauthenticated, Bearer token, HTTP Basic (Base64), custom headers, and session cookies.
+  - Target-bound session management (`SessionManager`) ensuring strict origin isolation.
+  - Cross-origin redirect credential stripping: sensitive `Authorization` headers and `Cookie` values are scrubbed when redirecting to a different origin.
+  - Response memory safety: bounded response bodies with `max_response_size_bytes` and truncation indicators.
+  - Case-insensitive response headers (`CaseInsensitiveDict`) and `httpx.Response` duck-typing compatibility (`.text`, `.content`, `.json()`).
+  - Strict zero-secret guarantee: passwords, tokens, and cookies are masked as `[REDACTED]` in terminal reports, logs, and JSON exports.
+
+### Out of Scope in Phase 3 (Planned for Future Phases)
+Active vulnerability scanning, payload execution (SQLi/NoSQLi), automated brute-force attacks, whole-app crawling, and Burp Suite integrations are explicitly scheduled for Phases 4–10.
 
 ---
 
@@ -126,6 +136,49 @@ dbshield discover \
 - `--overwrite`: Overwrite existing output file safely.
 - `--timeout`, `-t`: Override default request timeout budget in seconds.
 
+### 3. Safe HTTP Request & Authentication (`dbshield request`)
+
+Send a controlled, scope-verified HTTP request and report response/auth status:
+
+#### Unauthenticated GET Request
+```bash
+dbshield request --url https://app.example.com/api/v1/health
+```
+
+#### Bearer Token Authenticated Request
+```bash
+dbshield request \
+  --url https://app.example.com/api/v1/user \
+  --auth-type bearer \
+  --token "auth-token-xyz" \
+  --format json
+```
+
+#### HTTP Basic Authenticated Request
+```bash
+dbshield request \
+  --url https://app.example.com/admin \
+  --method GET \
+  --auth-type basic \
+  --username admin \
+  --password "admin-pass"
+```
+
+#### Request Command Options
+- `--url`, `-u`: Target endpoint URL (required).
+- `--method`, `-m`: HTTP method (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`, default `GET`).
+- `--header`, `-H`: Custom header in `'Name: Value'` format (repeatable).
+- `--data`, `-d`: Form / raw text payload.
+- `--json`, `-j`: Raw JSON payload string.
+- `--auth-type`, `-a`: Auth mechanism (`none`, `bearer`, `basic`, `header`, `cookie`, default `none`).
+- `--token`: Bearer authentication token.
+- `--username`, `-U`: HTTP Basic username.
+- `--password`, `-P`: HTTP Basic password.
+- `--cookie`, `-C`: Session cookie in `'name=value'` format (repeatable).
+- `--format`, `-f`: Output format (`text` or `json`, default `text`).
+- `--output`, `-o`: File path to save results.
+- `--overwrite`: Overwrite existing destination file.
+
 ---
 
 ## Configuration
@@ -148,7 +201,7 @@ Configuration is managed via environment variables or a local `.env` file (see `
 
 ## Development and Testing
 
-Execute the test suite (77 unit and integration tests):
+Execute the test suite (115 unit and integration tests):
 ```bash
 pytest
 ```

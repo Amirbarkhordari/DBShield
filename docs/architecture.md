@@ -169,13 +169,82 @@ Construct DiscoveryResult
 
 ---
 
-## 5. Extension Points for Future Phases
+## 5. HTTP Request Handling & Authentication Layer (Phase 3)
+
+### 5.1 Architecture Overview
+
+The Phase 3 HTTP layer provides a safe, reusable transport and session management abstraction consumed by future scanning modules (SQLi, NoSQLi):
+
+```
+                      CLI (`dbshield request`)
+                                │
+                                ▼
+                       AuthConfig & Target
+                                │
+                                ▼
+                         SessionManager
+            (Origin Binding, Cookie Jar, State Machine)
+                                │
+                  apply_auth()  │  Cross-origin check
+                                ▼
+                         SafeHTTPClient
+       (Scope Verification, Timeout Budget, Size Limit Bounding)
+                                │
+            ┌───────────────────┴───────────────────┐
+            ▼                                       ▼
+    Out-of-Scope Target                     In-Scope Target
+     (ScopeViolationError)                          │
+                                                    ▼
+                                            HTTP Request Dispatch
+                                                    │
+                                      ┌─────────────┴─────────────┐
+                                      ▼                           ▼
+                              Redirect Location             Response (2xx/4xx/5xx)
+                                      │                           │
+                              Cross-Origin Check                  ▼
+                         (Strip Credentials if origin      Construct HTTPResponse
+                            differs from initial)                 │
+                                      │                           ▼
+                                      └──────────────────> Update SessionManager
+                                                            (Cookies & State)
+```
+
+### 5.2 Key Abstractions
+
+1. **`SafeHTTPClient`**:
+   - Scope authorization verified before initial dispatch and before each redirect hop.
+   - Convenience helpers: `get()`, `post()`, `put()`, `patch()`, `delete()`, `head()`, `options()`.
+   - Response size bounded to `max_response_size_bytes` (default: 5MB) preventing memory exhaustion.
+   - Cross-origin redirect credential stripping: if destination origin differs from initial target origin, `Authorization` headers, custom auth headers, and `Cookie` values are scrubbed before proceeding.
+
+2. **`HTTPResponse`**:
+   - Normalized, case-insensitive headers via `CaseInsensitiveDict`.
+   - Duck-typing matching `httpx.Response` (`.text`, `.content`, `.json()`).
+   - Status classifications (`.is_success`, `.is_redirect`, `.is_client_error`, `.is_server_error`).
+   - Operational metadata: `elapsed_seconds`, `redirect_history`, `truncated`, `error_message`.
+   - Serialized safe dictionary representation (`.to_safe_dict()`).
+
+3. **`AuthConfig`**:
+   - Authentication modes: `none`, `bearer`, `basic` (Base64 encoded), `header`, `cookie`.
+   - Strict validation of required credentials per auth mode.
+   - Strict zero-leak guarantee: passwords, tokens, cookies, and sensitive headers masked as `[REDACTED]` in `to_safe_dict()` and `__repr__()`.
+
+4. **`SessionManager`**:
+   - Origin-bound session isolation (`target_origin = scheme://host[:port]`).
+   - Cross-origin refusal: raises `AuthenticationError` if attempting to send credentials to cross-origin targets.
+   - Cookie store: parses `Set-Cookie` headers and automatically supplies cookies on subsequent same-origin requests.
+   - Conservative state machine: 401 transitions to `UNAUTHENTICATED`; 403 preserves state; 200 transitions `CONFIGURED` to `UNKNOWN` (never assumes `AUTHENTICATED` without proof).
+   - Explicit lifecycle controls: `reset()` and `invalidate()`.
+
+---
+
+## 6. Extension Points for Future Phases
 
 | Phase | Module | Integration Point & Planned Responsibility | Status |
 | :--- | :--- | :--- | :--- |
 | **Phase 1: Foundation** | `dbshield.core` | Core models, ScopeManager, SafeHTTPClient, config, CLI foundation. | **Completed** |
 | **Phase 2: Login Discovery** | `dbshield.discovery` | Passive HTML login-page retrieval, form and input classification. | **Completed** |
-| **Phase 3: Auth & Sessions** | `dbshield.auth` | Session persistence, cookie jars, header manipulation, re-auth. | Planned |
+| **Phase 3: Auth & Sessions** | `dbshield.auth` / `dbshield.http` | Reusable HTTP layer, origin-isolated sessions, cookie jar, auth. | **Completed** |
 | **Phase 4: SQLi Engine** | `dbshield.engines.sqli` | Controlled SQL injection detection routines against target inputs. | Planned |
 | **Phase 5: NoSQLi Engine** | `dbshield.engines.nosqli` | Controlled NoSQL injection detection routines. | Planned |
 | **Phase 6: Payload Execution**| `dbshield.payloads` | Payload generation, mutation, and safe rate-limited delivery. | Planned |

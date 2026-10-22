@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-22
+
+### Added
+- **Phase 3 HTTP Request Handling and Authentication Management**: Reliable, reusable HTTP request layer, origin-isolated session management, and credential injection.
+- **CLI Request Command (`dbshield request`)**: Safe, scope-verified HTTP execution supporting methods, headers, payloads, authentication profiles, output export, and Linux CLI Design System exit codes.
+- **Extended HTTP Client (`SafeHTTPClient`)**: Explicit convenience methods (`get`, `post`, `put`, `patch`, `delete`, `head`, `options`), configurable `max_response_size_bytes` bounding, and session manager integration.
+- **HTTP Response Abstraction (`HTTPResponse`)**: Bounded response bodies, case-insensitive headers via `CaseInsensitiveDict`, status classification properties, and `httpx.Response` duck-typing compatibility (`.text`, `.content`, `.json()`).
+- **Authentication Configuration (`AuthConfig`)**: Explicit credential profiles for Bearer tokens, HTTP Basic authentication (Base64 encoding), custom headers, and explicit session cookies.
+- **Session & Origin Isolation (`SessionManager`)**: Origin-binding to prevent cross-origin credential transmission, automatic cookie jar persistence via `Set-Cookie` ingestion, and explicit session reset/invalidation lifecycles.
+- **Cross-Origin Redirect Protection**: Automatically strips `Authorization` headers and cookies when following in-scope redirects to different origins.
+- **Conservative Auth State Evaluation**: Distinguishes transport failures from HTTP error responses; preserves the difference between unknown authentication states and confirmed failures (never infers authentication from HTTP 200 alone).
+- **Expanded Test Suite**: Added 38 new unit and integration tests (115 total tests passing 100%).
+
+### Security
+- **Strict Origin Credential Isolation**: Refuses to transmit session credentials to cross-origin destinations and strips sensitive headers across redirect origins.
+- **Zero-Secret Exposure**: Credentials (passwords, tokens, cookies) are masked with `[REDACTED]` in logs, terminal reports, and JSON exports.
+- **Response Memory Safety**: Large responses are capped at `max_response_size_bytes` with truncation indicators to prevent out-of-memory denial of service.
+
 ## [0.2.0] - 2026-10-22
 
 ### Added
