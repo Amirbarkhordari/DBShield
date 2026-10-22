@@ -308,7 +308,75 @@ The Phase 4 SQL Injection Detection Engine provides modular, defensive, and expl
 
 ---
 
-## 7. Extension Points for Future Phases
+## 7. NoSQL Injection Testing Engine Architecture (`dbshield.nosqli`)
+
+### 7.1 Architecture and Data Flow
+
+```
+                            CLI (`dbshield nosqli`)
+                                       │
+                                       ▼
+                         Candidate Parameter Extraction
+             (URL Query, Form Body, Nested JSON Key-Path Traversal)
+                                       │
+                                       ▼
+                             Safety & Scope Firewall
+               - ScopeManager.assert_in_scope()
+               - Ineligible Parameter Filter (Skip Passwords/Tokens)
+                                       │
+                                       ▼
+                            Baseline Characterization
+                    (2 Sample Probes, Stability Verification)
+                                       │
+                  ┌────────────────────┴────────────────────┐
+                  ▼                                         ▼
+          Stable Baseline                          Unstable Baseline
+                  │                               (Mark INCONCLUSIVE)
+                  ├─────────────────────────────────────────┐
+                  ▼                                         ▼
+         Error-Based Detector                     Differential Detector
+    (Match MongoDB, CouchDB, Generic         (Paired Truthy/Falsy Probes,
+     vs Baseline Error Catalog)                Volatile Token & ObjectId Masking)
+                  │                                         │
+                  └────────────────────┬────────────────────┘
+                                       │
+                                       ▼
+                              Construct Findings
+              (`POTENTIAL_INDICATOR`, `NO_INDICATOR`, `INCONCLUSIVE`)
+                                       │
+                                       ▼
+                           Terminal & JSON Reports
+```
+
+### 7.2 Key Abstractions
+
+1. **`NoSQLiEngine`**:
+   - Coordinates candidate parameter extraction, scope pre-flight validation, and budget ceilings.
+   - Recursively traverses JSON structures to discover dot-delimited key paths (e.g. `filter.user_id`).
+   - Implements isolated deep cloning via `copy.deepcopy` in `_mutate_json_path`, ensuring that mutating target keys preserves all outer schemas and sibling keys intact.
+   - Supports offline response fixture analysis via `analyze_fixture_records()`.
+
+2. **`NoSQLBaselineCharacterizer`**:
+   - Probes endpoints to profile status codes, content lengths, headers, and normalized body hashes.
+   - Detects status fluctuations or excessive response drift, flagging unstable baselines as `INCONCLUSIVE`.
+
+3. **`NoSQLResponseNormalizer`**:
+   - Deterministically masks volatile dynamic elements (ISO/RFC timestamps, UUIDs, CSRF tokens, epochs).
+   - Automatically masks 24-hex-character MongoDB ObjectIds (`ObjectId("...")` and raw 24-hex hashes) with `[DYNAMIC_OBJECTID]`.
+   - Computes structural similarity ratios using `difflib.SequenceMatcher`.
+
+4. **`NoSQLSignatureCatalog` & `NoSQLErrorDetector`**:
+   - Curated catalog for MongoDB (operator rejection, query canonicalization, `$where` JavaScript syntax errors, driver operation failures, BSON document exceptions, Mongoose ORM `CastError`, regex errors), CouchDB (compilation errors, Mango selector syntax errors), and generic NoSQL document stores.
+   - Explicitly rejects generic HTTP 500/400 errors lacking database signatures.
+   - Discards pre-existing baseline errors to eliminate false positives.
+
+5. **`NoSQLDifferentialDetector`**:
+   - Evaluates paired operator conditions (Truthy wildcards like `$ne` vs Falsy non-matching sets like `$in: []` or `$eq`) against baseline.
+   - Flags candidate findings only when the Truthy condition matches baseline ($\ge 0.85$ similarity) and Falsy condition stably diverges ($\le 0.75$ similarity or differing status code).
+
+---
+
+## 8. Extension Points for Future Phases
 
 | Phase | Module | Integration Point & Planned Responsibility | Status |
 | :--- | :--- | :--- | :--- |
@@ -316,7 +384,7 @@ The Phase 4 SQL Injection Detection Engine provides modular, defensive, and expl
 | **Phase 2: Login Discovery** | `dbshield.discovery` | Passive HTML login-page retrieval, form and input classification. | **Completed** |
 | **Phase 3: Auth & Sessions** | `dbshield.auth` / `dbshield.http` | Reusable HTTP layer, origin-isolated sessions, cookie jar, auth. | **Completed** |
 | **Phase 4: SQLi Engine** | `dbshield.sqli` | Controlled SQL injection detection routines against target inputs. | **Completed** |
-| **Phase 5: NoSQLi Engine** | `dbshield.engines.nosqli` | Controlled NoSQL injection detection routines. | Planned |
+| **Phase 5: NoSQLi Engine** | `dbshield.nosqli` | Controlled NoSQL injection detection routines with nested JSON support. | **Completed** |
 | **Phase 6: Payload Execution**| `dbshield.payloads` | Payload generation, mutation, and safe rate-limited delivery. | Planned |
 | **Phase 7: Evidence Analysis**| `dbshield.analysis` | Response anomaly detection, error pattern matching, differential analysis.| Planned |
 | **Phase 8: Reporting** | `dbshield.reporting` | Formatted JSON, HTML, and Markdown assessment summaries. | Planned |

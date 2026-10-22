@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-22
+
+### Added
+- **Phase 5 NoSQL Injection Detection Engine**: Dedicated defensive assessment engine for detecting document database syntax errors, driver exceptions, and operator differential signals.
+- **CLI NoSQLi Command (`dbshield nosqli`)**: CLI entry point supporting target URLs, candidate parameter filtering, request budgets, authentication injection, JSON export, and offline fixture assessment.
+- **Nested JSON Parameter Extraction & Mutation**: Recursive discovery of candidate dot-delimited key paths (e.g. `filter.user_id`) and isolated deep mutation preserving all sibling keys and outer schema structures.
+- **MongoDB Error Signature Catalog**: Curated signatures for operator rejection (`unknown operator`), query canonicalization, `$where` JavaScript syntax errors, PyMongo `OperationFailure`, BSON serialization exceptions, Mongoose `CastError`, and regular expression errors.
+- **CouchDB Error Signature Catalog**: Signatures for JavaScript view compilation errors, Mango query selector syntax errors, and invalid selector exceptions.
+- **Generic NoSQL Signatures**: Generic document store query syntax and client exception recognition.
+- **MongoDB ObjectId Normalization**: Automatic masking of 24-hex-character MongoDB ObjectIds (`ObjectId("...")` and raw 24-hex hashes) as `[DYNAMIC_OBJECTID]` to prevent false divergence in similarity scoring.
+- **Operator & Boolean Differential Detector (`NoSQLDifferentialDetector`)**: Compares paired truthy (e.g. `$ne` sentinel) and falsy (e.g. `$in: []` or `$eq`) responses against baseline.
+- **NoSQL Error Detector (`NoSQLErrorDetector`)**: Rejects generic 400/500 errors without database signatures and filters pre-existing baseline database faults.
+- **Offline Response Fixture Analysis**: Support for `--fixture <path>` enabling deterministic, zero-network laboratory validation from recorded JSON response fixtures.
+- **Expanded Test Suite**: Added 51 new unit and integration tests (236 total tests passing 100%, 88% statement coverage).
+
+### Security
+- **Defensive Assessment Only**: Strictly prohibits collection dumping, document exfiltration, record modification, automated exploitation, or denial-of-service timing queries.
+- **Zero-Credential Testing**: Passwords, auth tokens, and session nonces are excluded from test input delivery.
+- **Snippet Secret Redaction**: Response snippets captured in evidence records automatically redact passwords, API tokens, and session cookies.
+- **Request Budget Ceilings**: Strict per-parameter (`max_param_budget`) and per-scan (`max_budget`) ceilings prevent resource exhaustion.
+
 ## [0.4.0] - 2026-10-22
 
 ### Added

@@ -6,7 +6,7 @@
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
-[![Tests: Pytest](https://img.shields.io/badge/tests-185%20passed-brightgreen.svg)](#)
+[![Tests: Pytest](https://img.shields.io/badge/tests-236%20passed-brightgreen.svg)](#)
 
 ---
 
@@ -17,7 +17,7 @@
 
 ## Project Status
 
-- **Current Phase**: **Phase 4 — SQL Injection Detection Engine** (Completed & Verified)
+- **Current Phase**: **Phase 5 — NoSQL Injection Detection Engine** (Completed & Verified)
 - **Roadmap**: 10 Phases leading to advanced database vulnerability detection and Burp Suite integration. See [docs/roadmap.md](docs/roadmap.md).
 
 ### Implemented Functionality
@@ -68,8 +68,19 @@
   - Offline response fixture analysis (`--fixture <path>`): zero-network laboratory validation from captured JSON response fixtures.
   - Strict finding states: distinguishes `POTENTIAL_INDICATOR` (unconfirmed candidate finding) from `NO_INDICATOR` (does not prove secure), `INCONCLUSIVE`, `SKIPPED`, `BLOCKED_BY_SCOPE`, and `ERROR`.
 
-### Out of Scope in Phase 4 (Planned for Future Phases)
-Database extraction, table dumping, data modification, automated exploitation, credential brute-forcing, whole-app crawling, NoSQL injection (Phase 5), and independent verification (Phase 7).
+#### Phase 5: NoSQL Injection Detection Engine
+- **Dedicated NoSQLi Command (`dbshield nosqli`)**:
+  - Controlled, defensive testing of candidate parameters for NoSQL injection.
+  - Recursive nested JSON parameter extraction discovering candidate key paths (e.g. `filter.user_id`).
+  - Isolated JSON deep mutation preserving all sibling fields and outer schema structure.
+  - Error-based detector (`NoSQLErrorDetector`) with signature catalog for MongoDB (operator rejection, JavaScript `$where`, PyMongo errors, BSON exceptions, Mongoose CastError, regex errors), CouchDB (view compilation, Mango selectors), and generic document stores.
+  - MongoDB ObjectId normalization: masks 24-hex-character ObjectIds (`[DYNAMIC_OBJECTID]`) to prevent artificial divergence in similarity calculations.
+  - Operator and boolean differential detector (`NoSQLDifferentialDetector`) evaluating paired truthy/falsy queries.
+  - Offline response fixture analysis (`--fixture <path>`): zero-network laboratory validation from captured JSON fixtures.
+  - Safety firewall: sensitive parameters (`password`, `token`, `csrf`, `secret`, `otp`) are automatically skipped.
+
+### Out of Scope in Phase 5 (Planned for Future Phases)
+Database extraction, table/collection dumping, data modification, automated exploitation, credential brute-forcing, whole-app crawling, payload generation and mutation suites (Phase 6), and independent verification (Phase 7).
 
 ---
 
@@ -231,6 +242,49 @@ dbshield sqli --fixture ./tests/fixtures/sqli_sample.json
 - `--method`, `-m`: HTTP method (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, default `GET`).
 - `--data`, `-d`: Raw or URL-encoded form data body.
 - `--json`, `-j`: Raw JSON formatted request body.
+- `--auth-type`: Authentication method (`none`, `bearer`, `basic`, `header`, `cookie`, default `none`).
+- `--token`: Bearer authentication token.
+- `--username`: HTTP Basic username.
+- `--password`: HTTP Basic password.
+- `--cookie`: Session cookie string (`session=xyz`).
+- `--timeout`: Per-request timeout budget in seconds.
+- `--max-budget`: Total request budget ceiling across entire scan (default: 50).
+- `--max-param-budget`: Request budget ceiling per candidate parameter (default: 8).
+- `--disable-differential`: Disable boolean differential testing (run error-based only).
+- `--format`, `-f`: Output format (`text` or `json`, default `text`).
+- `--output`, `-o`: File path to export results.
+- `--overwrite`: Overwrite destination output file if it exists.
+
+### 5. NoSQL Injection Assessment (`nosqli`)
+
+#### Assess Target URL for NoSQL Injection
+```bash
+dbshield nosqli --url https://app.example.com/items?cat=books
+```
+
+#### Assess Nested JSON Request Body
+```bash
+dbshield nosqli \
+  --url https://app.example.com/api/v1/search \
+  --method POST \
+  --json '{"filter": {"user_id": "100", "role": "member"}, "limit": 10}' \
+  --param filter.user_id \
+  --format json \
+  --output ./nosqli-results.json
+```
+
+#### Offline Laboratory Fixture Assessment (Zero Network Traffic)
+```bash
+dbshield nosqli --fixture ./tests/fixtures/nosqli_sample.json
+```
+
+#### NoSQLi Command Options
+- `--url`, `-u`: Target URL to assess (required unless `--fixture` is specified).
+- `--fixture`: Path to JSON file containing captured baseline and test responses for offline laboratory testing.
+- `--param`, `-p`: Specific candidate parameter or nested dot-path to test (e.g. `filter.user_id`).
+- `--method`, `-m`: HTTP method (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, default `GET`).
+- `--data`, `-d`: Raw or URL-encoded form data body.
+- `--json`, `-j`: Raw JSON formatted request body (supports nested dictionaries and key paths).
 - `--auth-type`: Authentication method (`none`, `bearer`, `basic`, `header`, `cookie`, default `none`).
 - `--token`: Bearer authentication token.
 - `--username`: HTTP Basic username.

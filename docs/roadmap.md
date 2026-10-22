@@ -11,7 +11,7 @@ Phase 1: Project Foundation & Core Architecture        [COMPLETED]
 Phase 2: Login-Page Discovery & Form Analysis          [COMPLETED]
 Phase 3: HTTP Request Handling & Authentication        [COMPLETED]
 Phase 4: SQL Injection Testing Engine                  [COMPLETED]
-Phase 5: NoSQL Injection Testing Engine                [PLANNED]
+Phase 5: NoSQL Injection Testing Engine                [COMPLETED]
 Phase 6: Payload Management & Test Execution           [PLANNED]
 Phase 7: Evidence Analysis & Verification              [PLANNED]
 Phase 8: Result Presentation & Report Generation       [PLANNED]
@@ -84,11 +84,19 @@ Phase 10: Whole-App Expansion & Burp Suite Integration [PLANNED]
 ---
 
 ### Phase 5: NoSQL Injection Testing Engine
-- **Status**: **Planned**
-- **Scope**:
-  - MongoDB query operator injection (`$ne`, `$gt`, `$regex`)
-  - JSON body parameter injection
-  - Header injection for NoSQL database drivers
+- **Status**: **Completed**
+- **Deliverables**:
+  - Typer CLI `dbshield nosqli` command with parameter targeting, budget limits, formats, and offline fixtures
+  - Modular NoSQL injection engine (`NoSQLiEngine`) reusing `SafeHTTPClient`, `ScopeManager`, and `SessionManager`
+  - Nested JSON parameter extraction and isolated key-path mutation preserving full document structures
+  - Baseline response characterization (`NoSQLBaselineCharacterizer`) verifying stability across multi-probe samples
+  - Error-based NoSQL detector (`NoSQLErrorDetector`) with curated signature catalog across MongoDB, CouchDB, and generic NoSQL
+  - Operator and boolean differential detector (`NoSQLDifferentialDetector`) comparing paired conditions against baseline
+  - Dynamic token masking (`NoSQLResponseNormalizer`) eliminating volatile timestamps, UUIDs, CSRF tokens, and MongoDB ObjectIds
+  - Zero-credential safety filter automatically skipping passwords, auth tokens, and session nonces
+  - Structured immutable finding models (`NoSQLFinding`, `NoSQLScanResult`, `NoSQLEvidenceRecord`)
+  - Offline fixture analysis mode enabling zero-network laboratory validation
+  - Automated test suite expanded to 236 tests (100% pass rate, clean Ruff and Mypy)
 
 ---
 
