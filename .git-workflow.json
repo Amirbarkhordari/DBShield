@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "project_name": "dbshield",
+  "remote_name": "origin",
+  "target_branch": "main",
+  "auto_commit": true,
+  "auto_push": false,
+  "test_command": "pytest",
+  "docs": {
+    "readme": "README.md",
+    "changelog": "CHANGELOG.md",
+    "contributing": "CONTRIBUTING.md",
+    "docs_dir": "docs"
+  },
+  "secret_scanning": {
+    "enabled": true,
+    "block_on_detect": true
+  },
+  "release": {
+    "version_file": "pyproject.toml",
+    "tag_prefix": "v"
+  }
+}
