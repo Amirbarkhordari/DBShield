@@ -53,5 +53,9 @@ class HTTPClientError(DBShieldError):
     """Raised when an HTTP client protocol, redirect limit, or connection failure occurs."""
 
 
+class DiscoveryError(DBShieldError):
+    """Raised when an error occurs during login page retrieval, HTML parsing, or input analysis."""
+
+
 class CLIExecutionError(DBShieldError):
     """Raised when CLI command execution fails due to invalid parameters or runtime conditions."""

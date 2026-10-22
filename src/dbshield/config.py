@@ -4,13 +4,31 @@ Defines conservative defaults, validates operational limits, and ensures safe
 exposure of non-sensitive parameters.
 """
 
+import json
 from pathlib import Path
 from typing import Any
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    EnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 from dbshield.exceptions import ConfigurationError
+
+
+class LenientEnvSettingsSource(EnvSettingsSource):
+    """Environment source allowing comma-separated or JSON list representations."""
+
+    def decode_complex_value(self, field_name: str, field: Any, value: Any) -> Any:
+        try:
+            return super().decode_complex_value(field_name, field, value)
+        except Exception:
+            if isinstance(value, str):
+                return [x.strip() for x in value.split(",") if x.strip()]
+            raise
 
 
 class Settings(BaseSettings):
@@ -22,6 +40,22 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,  # noqa: ARG003
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            LenientEnvSettingsSource(settings_cls),
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     # HTTP Client Configuration
     http_timeout: float = Field(
@@ -85,12 +119,23 @@ class Settings(BaseSettings):
             raise ValueError(f"Invalid log_level '{v}'. Must be one of {sorted(valid_levels)}.")
         return "WARNING" if upper == "WARN" else upper
 
-    @field_validator("allowed_hosts")
+    @field_validator("allowed_hosts", mode="before")
     @classmethod
-    def clean_allowed_hosts(cls, hosts: list[str]) -> list[str]:
+    def clean_allowed_hosts(cls, hosts: list[str] | str) -> list[str]:
+        if isinstance(hosts, str):
+            stripped = hosts.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, list):
+                        hosts = parsed
+                except Exception:
+                    pass
+            if isinstance(hosts, str):
+                hosts = [h.strip() for h in stripped.split(",") if h.strip()]
         cleaned: list[str] = []
         for h in hosts:
-            stripped = h.strip().lower()
+            stripped = str(h).strip().lower()
             # Strip scheme if accidentally provided in allowed_hosts (e.g. https://example.com)
             if "://" in stripped:
                 stripped = stripped.split("://", 1)[1]
