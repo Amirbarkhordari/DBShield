@@ -200,3 +200,68 @@ def test_cli_report_status_filtering(tmp_path: Path) -> None:
     parsed = json.loads(result.stdout)
     assert parsed["summary"]["total_findings"] == 1
     assert parsed["findings"][0]["verification_status"] == "verified"
+
+
+def test_cli_report_invalid_status_rejects_with_exit_code_2(tmp_path: Path) -> None:
+    """Verify unrecognized --status value is rejected with exit code 2 and stderr message."""
+    in_file = _create_sample_findings_file(tmp_path)
+    result = runner.invoke(app, ["report", "-i", str(in_file), "--status", "invalid_status_xyz"])
+    assert result.exit_code == 2
+    assert "Invalid status filter" in result.stderr
+    assert "Supported statuses:" in result.stderr
+
+
+def test_cli_report_redaction_options_and_url_masking(tmp_path: Path) -> None:
+    """Verify --redact (default) masks URL query secrets and --no-redact preserves them."""
+    # Findings file containing synthetic secret tokens in URL
+    raw_findings = {
+        "target_url": "http://target.local/api/search?user=alice&token=synth_secret_123&key=synth_key_abc",
+        "findings": [
+            {
+                "id": "DBS-FINDING-URL",
+                "title": "SQL Injection in search",
+                "category": "sql_injection",
+                "subtype": "error_based",
+                "target_url": "http://target.local/api/search?user=alice&token=synth_secret_123&key=synth_key_abc",
+                "endpoint": "/api/search",
+                "http_method": "GET",
+                "parameter_name": "q",
+                "parameter_location": "query",
+                "engine": "sqli",
+                "technique": "error_based",
+                "verification_status": "verified",
+                "confidence_level": "verified",
+                "confidence_score": 0.95,
+                "severity": "high",
+                "severity_rationale": "Database error verified.",
+                "description": "SQL syntax error observed.",
+                "evidence_summary": "syntax error",
+                "evidence_count": 1,
+                "evidence_ids": ["ev-url-01"],
+                "remediation": "Use parameterized queries.",
+                "cwe_id": "CWE-89",
+                "cwe_name": "SQL Injection",
+                "execution_references": {},
+                "first_observed_at": "2026-10-23T12:00:00Z",
+                "metadata": {},
+            }
+        ],
+    }
+    file_path = tmp_path / "url_findings.json"
+    file_path.write_text(json.dumps(raw_findings), encoding="utf-8")
+
+    # 1. Default (redact=True): secrets masked
+    res_redact = runner.invoke(app, ["report", "-i", str(file_path), "-f", "json"])
+    assert res_redact.exit_code == 0
+    assert "synth_secret_123" not in res_redact.stdout
+    assert "synth_key_abc" not in res_redact.stdout
+    assert "token=[REDACTED]" in res_redact.stdout
+    assert "key=[REDACTED]" in res_redact.stdout
+
+    # 2. Explicit --no-redact: secrets preserved
+    res_no_redact = runner.invoke(
+        app, ["report", "-i", str(file_path), "-f", "json", "--no-redact"]
+    )
+    assert res_no_redact.exit_code == 0
+    assert "synth_secret_123" in res_no_redact.stdout
+    assert "synth_key_abc" in res_no_redact.stdout

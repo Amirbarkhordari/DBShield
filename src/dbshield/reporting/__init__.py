@@ -19,6 +19,7 @@ from dbshield.reporting.redaction import (
     escape_csv_formula,
     redact_parameter,
     redact_text,
+    redact_url,
 )
 from dbshield.reporting.severity import SeverityAssessor
 
@@ -38,4 +39,5 @@ __all__ = [
     "escape_csv_formula",
     "redact_parameter",
     "redact_text",
+    "redact_url",
 ]

@@ -51,14 +51,15 @@ src/dbshield/reporting/
 
 ### In-Scope (Delivered)
 - Cross-engine finding normalization from `VerificationResult`, `SQLiScanResult`, `NoSQLScanResult`, and generic JSON payloads.
-- Deterministic finding ID computation based on target URL, category, transport location, parameter name, and technique.
-- Deduplication of equivalent observations with evidence count accumulation and status promotion.
+- Deterministic finding ID computation based on target URL, category, transport location, canonical parameter name, and technique (preventing ID collisions between distinct sensitive parameters).
+- Deduplication of equivalent observations with conservative evidence count preservation (preventing duplicate inflation) and status promotion.
 - Decoupling of confidence and severity; documented severity assignment rules.
 - Concrete CWE mappings: `CWE-89` (SQL Injection) and `CWE-943` (NoSQL Injection).
-- Neutralization of spreadsheet formula injection (`=`, `+`, `-`, `@`, `\t`, `\r`) in CSV export.
+- Neutralization of spreadsheet formula injection (`=`, `+`, `-`, `@`, `\t`, `\r`, `\n`) in CSV export, including multiline cell payloads and leading newlines.
+- Masking of sensitive query parameters in target URLs and assessment metadata with `--redact/--no-redact` control.
 - Support for JSON, CSV, Markdown, and Terminal report generation.
-- CLI command `dbshield report` with filtering, format selection, and output overwrite safeguards.
-- Full test suite: 38 new unit and integration tests (381 total project tests passing).
+- CLI command `dbshield report` with filtering (`--severity`, validated `--status`), format selection, and output overwrite safeguards.
+- Full test suite: 45 Phase 8 unit and integration tests (388 total project tests passing).
 - Zero new external runtime dependencies.
 
 ### Explicitly Excluded
@@ -73,10 +74,10 @@ src/dbshield/reporting/
 
 | Quality Gate | Command | Result |
 | :--- | :--- | :--- |
-| **Test Suite** | `pytest tests -q` | **381 passed** in 12.61s (0 failed, 0 errors) |
-| **New Phase 8 Tests** | `pytest tests/unit/test_reporting_* tests/integration/test_cli_report.py -v` | **38 passed** (100% pass rate) |
-| **Coverage** | `pytest tests --cov=dbshield.reporting` | **86% statement coverage** on reporting module |
-| **Overall Project Coverage** | `pytest tests --cov=dbshield` | **86% overall statement coverage** |
+| **Test Suite** | `pytest tests -q` | **388 passed** in 24.80s (0 failed, 0 errors) |
+| **Phase 8 Tests** | `pytest tests/unit/test_reporting_* tests/integration/test_cli_report.py -v` | **45 passed** (100% pass rate) |
+| **Coverage** | `pytest tests --cov=dbshield.reporting` | **85% statement coverage** on reporting module |
+| **Overall Project Coverage** | `pytest tests --cov=dbshield` | **86% overall statement coverage** (5027 statements) |
 | **Ruff Lint** | `ruff check src tests` | **All checks passed!** |
 | **Ruff Formatting** | `ruff format --check src tests` | **121 files already formatted** |
 | **Mypy Type Checking** | `mypy src` | **Success: no issues found in 67 source files** |
@@ -88,10 +89,10 @@ src/dbshield/reporting/
 
 1. `src/dbshield/reporting/models.py`: Structured finding, severity, category, and report models.
 2. `src/dbshield/reporting/severity.py`: Transparent severity assessor, CWE mapping, remediation catalog.
-3. `src/dbshield/reporting/redaction.py`: Redaction filter and CSV formula injection protection.
-4. `src/dbshield/reporting/normalizer.py`: Cross-engine finding normalizer and deduplicator.
+3. `src/dbshield/reporting/redaction.py`: Redaction filter, URL secret query sanitizer, and CSV formula injection protection.
+4. `src/dbshield/reporting/normalizer.py`: Cross-engine finding normalizer, non-colliding deterministic IDs, and deduplicator with non-inflated evidence counting.
 5. `src/dbshield/reporting/exporters/`: JSON, CSV, Markdown, and Terminal report exporters.
-6. `src/dbshield/cli.py`: Registered `dbshield report` command with format, filter, and file handling.
-7. `tests/unit/test_reporting_*.py`: 27 unit tests covering models, severity, normalizer, CSV injection, exporters, and redaction.
-8. `tests/integration/test_cli_report.py`: 11 integration tests covering CLI report command.
-9. Documentation updates in `docs/phases/phase-08.md`, `docs/architecture.md`, `docs/roadmap.md`, `CHANGELOG.md`, and `README.md`.
+6. `src/dbshield/cli.py`: Registered `dbshield report` command with format, filter, `--status` validation, `--redact/--no-redact`, and file handling.
+7. `tests/unit/test_reporting_*.py`: 32 unit tests covering models, severity, normalizer, CSV injection, exporters, and redaction.
+8. `tests/integration/test_cli_report.py`: 13 integration tests covering CLI report command.
+9. Documentation updates in `docs/phases/phase-08.md`.

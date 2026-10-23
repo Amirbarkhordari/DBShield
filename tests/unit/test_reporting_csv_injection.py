@@ -29,6 +29,16 @@ def test_escape_csv_formula_neutralizes_dangerous_prefixes() -> None:
     # Leading whitespace before formula char is also protected
     assert escape_csv_formula("   =cmd") == "'   =cmd"
 
+    # Leading newlines and control characters before formula char
+    assert escape_csv_formula("\n=1+1") == "'\n=1+1"
+    assert escape_csv_formula("\r\n=1+1") == "'\r\n=1+1"
+    assert escape_csv_formula("\t=1+1") == "'\t=1+1"
+    assert escape_csv_formula(" \n\t=1+1") == "' \n\t=1+1"
+
+    # Multiline cell values with formula triggers after newline
+    assert escape_csv_formula("Description\n=1+1") == "'Description\n=1+1"
+    assert escape_csv_formula("Header\r\n@SUM(A1:A5)") == "'Header\r\n@SUM(A1:A5)"
+
     # Benign text without formula prefix is unchanged
     assert escape_csv_formula("normal text") == "normal text"
     assert escape_csv_formula("parameter_name") == "parameter_name"
@@ -141,3 +151,43 @@ def test_csv_exporter_handles_commas_newlines_and_unicode() -> None:
     assert len(rows) == 2
     assert rows[1][1] == 'Quote, "with comma", and newline \n inside title'
     assert "/üñîçødé" in rows[1][9]
+
+
+def test_csv_exporter_escapes_multiline_and_newline_formula_cells() -> None:
+    """Verify serialized CSV output properly escapes multiline and newline formula injection payloads."""
+    meta = ReportMetadata(target_url="http://target.local", total_findings=1)
+    finding = NormalizedSecurityFinding(
+        id="DBS-FORMULA-ML",
+        title="\n=1+1 title with leading newline",
+        category=VulnerabilityCategory.SQL_INJECTION,
+        subtype="error_based",
+        target_url="http://target.local/vuln",
+        endpoint="/vuln",
+        http_method="GET",
+        parameter_name="id",
+        parameter_location=ParameterLocation.QUERY,
+        engine="sqli",
+        technique="error_based",
+        verification_status=VerificationStatus.VERIFIED,
+        confidence_level=ConfidenceLevel.VERIFIED,
+        confidence_score=0.90,
+        severity=FindingSeverity.HIGH,
+        severity_rationale="High impact",
+        description="Line 1\n=cmd|' /C calc'!A0\nLine 3",
+        evidence_summary="\r\n+2+2 evidence",
+        remediation="Remediation guidance",
+        cwe_id="CWE-89",
+    )
+    report = SecurityAssessmentReport(metadata=meta, findings=[finding])
+    csv_text = CSVReportExporter().export(report)
+
+    reader = csv.reader(io.StringIO(csv_text))
+    rows = list(reader)
+    assert len(rows) == 2
+    data = rows[1]
+    title_idx = CSV_COLUMNS.index("title")
+    desc_idx = CSV_COLUMNS.index("evidence_summary")
+
+    # Title must start with single quote before the newline
+    assert data[title_idx].startswith("'\n=")
+    assert data[desc_idx].startswith("'\r\n+")

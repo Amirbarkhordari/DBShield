@@ -20,7 +20,7 @@ from dbshield.reporting.models import (
     SecurityAssessmentReport,
     VulnerabilityCategory,
 )
-from dbshield.reporting.redaction import redact_parameter, redact_text
+from dbshield.reporting.redaction import redact_parameter, redact_text, redact_url
 from dbshield.reporting.severity import SeverityAssessor
 from dbshield.sqli.models import SQLiScanResult
 from dbshield.verification.models import (
@@ -61,21 +61,26 @@ class FindingNormalizer:
     """Cross-engine normalization, correlation, and report synthesis."""
 
     @classmethod
-    def from_verification_finding(cls, finding: VerificationFinding) -> NormalizedSecurityFinding:
+    def from_verification_finding(
+        cls, finding: VerificationFinding, redact_secrets: bool = True
+    ) -> NormalizedSecurityFinding:
         """Convert a Phase 7 VerificationFinding into a NormalizedSecurityFinding."""
         category = _canonicalize_category(finding.vulnerability_class.value)
-        endpoint = _extract_endpoint(finding.target_url)
-        param_name = redact_parameter(finding.parameter_name)
+        raw_target_url = finding.target_url
+        target_url = redact_url(raw_target_url) if redact_secrets else raw_target_url
+        endpoint = _extract_endpoint(target_url)
+        raw_param = finding.parameter_name
+        param_name = redact_parameter(raw_param) if redact_secrets else raw_param
         technique = (
             finding.corroborating_evidence[0].rule_id
             if finding.corroborating_evidence
             else "generic"
         )
         finding_id = NormalizedSecurityFinding.compute_deterministic_id(
-            target_url=finding.target_url,
+            target_url=target_url,
             category=category.value,
             parameter_location=finding.parameter_location.value,
-            parameter_name=param_name,
+            parameter_name=raw_param,
             technique=technique,
         )
 
@@ -104,7 +109,7 @@ class FindingNormalizer:
             title=title,
             category=category,
             subtype=technique,
-            target_url=finding.target_url,
+            target_url=target_url,
             endpoint=endpoint,
             http_method="GET",
             parameter_name=param_name,
@@ -130,12 +135,17 @@ class FindingNormalizer:
 
     @classmethod
     def from_verification_result(
-        cls, result: VerificationResult, scope: list[str] | None = None
+        cls,
+        result: VerificationResult,
+        scope: list[str] | None = None,
+        redact_secrets: bool = True,
     ) -> SecurityAssessmentReport:
         """Translate a Phase 7 VerificationResult into a complete SecurityAssessmentReport."""
         normalized_findings: list[NormalizedSecurityFinding] = []
         for f in result.findings:
-            normalized_findings.append(cls.from_verification_finding(f))
+            normalized_findings.append(
+                cls.from_verification_finding(f, redact_secrets=redact_secrets)
+            )
 
         # Deduplicate and consolidate findings
         deduped = cls.deduplicate_findings(normalized_findings)
@@ -146,6 +156,7 @@ class FindingNormalizer:
             findings=deduped,
             scope=scope or [result.target_url],
             limitations=result.limitations,
+            redact_secrets=redact_secrets,
         )
 
         return SecurityAssessmentReport(
@@ -155,7 +166,10 @@ class FindingNormalizer:
 
     @classmethod
     def from_sqli_scan_result(
-        cls, result: SQLiScanResult, scope: list[str] | None = None
+        cls,
+        result: SQLiScanResult,
+        scope: list[str] | None = None,
+        redact_secrets: bool = True,
     ) -> SecurityAssessmentReport:
         """Convert Phase 4 SQLiScanResult directly into a SecurityAssessmentReport."""
         findings: list[NormalizedSecurityFinding] = []
@@ -164,14 +178,17 @@ class FindingNormalizer:
         remediation = SeverityAssessor.get_remediation(category)
 
         for f in result.findings:
-            param_name = redact_parameter(f.parameter.name)
-            endpoint = _extract_endpoint(f.target_url)
+            raw_param = f.parameter.name
+            param_name = redact_parameter(raw_param) if redact_secrets else raw_param
+            raw_target_url = f.target_url
+            target_url = redact_url(raw_target_url) if redact_secrets else raw_target_url
+            endpoint = _extract_endpoint(target_url)
             technique = f.technique.value
             finding_id = NormalizedSecurityFinding.compute_deterministic_id(
-                target_url=f.target_url,
+                target_url=target_url,
                 category=category.value,
                 parameter_location=f.parameter.location.value,
-                parameter_name=param_name,
+                parameter_name=raw_param,
                 technique=technique,
             )
 
@@ -198,7 +215,7 @@ class FindingNormalizer:
                     title=f"Potential SQL Injection in {f.parameter.location.value} parameter '{param_name}'",
                     category=category,
                     subtype=technique,
-                    target_url=f.target_url,
+                    target_url=target_url,
                     endpoint=endpoint,
                     http_method=f.http_method,
                     parameter_name=param_name,
@@ -228,12 +245,16 @@ class FindingNormalizer:
             findings=deduped,
             scope=scope or [result.target_url],
             limitations=["Unverified direct detector results; subject to Phase 7 verification."],
+            redact_secrets=redact_secrets,
         )
         return SecurityAssessmentReport(metadata=metadata, findings=deduped)
 
     @classmethod
     def from_nosqli_scan_result(
-        cls, result: NoSQLScanResult, scope: list[str] | None = None
+        cls,
+        result: NoSQLScanResult,
+        scope: list[str] | None = None,
+        redact_secrets: bool = True,
     ) -> SecurityAssessmentReport:
         """Convert Phase 5 NoSQLScanResult directly into a SecurityAssessmentReport."""
         findings: list[NormalizedSecurityFinding] = []
@@ -242,14 +263,17 @@ class FindingNormalizer:
         remediation = SeverityAssessor.get_remediation(category)
 
         for f in result.findings:
-            param_name = redact_parameter(f.parameter.name)
-            endpoint = _extract_endpoint(f.target_url)
+            raw_param = f.parameter.name
+            param_name = redact_parameter(raw_param) if redact_secrets else raw_param
+            raw_target_url = f.target_url
+            target_url = redact_url(raw_target_url) if redact_secrets else raw_target_url
+            endpoint = _extract_endpoint(target_url)
             technique = f.technique.value
             finding_id = NormalizedSecurityFinding.compute_deterministic_id(
-                target_url=f.target_url,
+                target_url=target_url,
                 category=category.value,
                 parameter_location=f.parameter.location.value,
-                parameter_name=param_name,
+                parameter_name=raw_param,
                 technique=technique,
             )
 
@@ -275,7 +299,7 @@ class FindingNormalizer:
                     title=f"Potential NoSQL Injection in {f.parameter.location.value} parameter '{param_name}'",
                     category=category,
                     subtype=technique,
-                    target_url=f.target_url,
+                    target_url=target_url,
                     endpoint=endpoint,
                     http_method=f.http_method,
                     parameter_name=param_name,
@@ -305,32 +329,51 @@ class FindingNormalizer:
             findings=deduped,
             scope=scope or [result.target_url],
             limitations=["Unverified direct detector results; subject to Phase 7 verification."],
+            redact_secrets=redact_secrets,
         )
         return SecurityAssessmentReport(metadata=metadata, findings=deduped)
 
     @classmethod
     def from_dict_payload(
-        cls, data: dict[str, Any], default_target_url: str = "http://unknown"
+        cls,
+        data: dict[str, Any],
+        default_target_url: str = "http://unknown",
+        redact_secrets: bool = True,
     ) -> SecurityAssessmentReport:
         """Parse raw dictionary data (e.g. from JSON file) into a SecurityAssessmentReport."""
         # 1. Direct SecurityAssessmentReport structure
         if "findings" in data and "metadata" in data:
-            return SecurityAssessmentReport.model_validate(data)
+            report = SecurityAssessmentReport.model_validate(data)
+            if redact_secrets:
+                sanitized_findings = [
+                    f.model_copy(update={"target_url": redact_url(f.target_url)})
+                    for f in report.findings
+                ]
+                meta = report.metadata.model_copy(
+                    update={
+                        "target_url": redact_url(report.metadata.target_url),
+                        "assessment_scope": [
+                            redact_url(s) for s in report.metadata.assessment_scope
+                        ],
+                    }
+                )
+                return SecurityAssessmentReport(metadata=meta, findings=sanitized_findings)
+            return report
 
         # 2. Phase 7 VerificationResult structure
         if "summary" in data and "findings" in data:
             vr = VerificationResult.model_validate(data)
-            return cls.from_verification_result(vr)
+            return cls.from_verification_result(vr, redact_secrets=redact_secrets)
 
         # 3. Phase 4 SQLiScanResult structure
         if "findings" in data and "candidate_parameters" in data:
             sqli_res = SQLiScanResult.model_validate(data)
-            return cls.from_sqli_scan_result(sqli_res)
+            return cls.from_sqli_scan_result(sqli_res, redact_secrets=redact_secrets)
 
         # 4. Phase 5 NoSQLScanResult structure
         if "findings" in data and "tested_providers" in data:
             nosqli_res = NoSQLScanResult.model_validate(data)
-            return cls.from_nosqli_scan_result(nosqli_res)
+            return cls.from_nosqli_scan_result(nosqli_res, redact_secrets=redact_secrets)
 
         # 5. Generic dictionary with findings list
         findings_raw = data.get("findings", [])
@@ -339,23 +382,32 @@ class FindingNormalizer:
             for item in findings_raw:
                 if isinstance(item, dict):
                     with contextlib.suppress(Exception):
-                        findings.append(NormalizedSecurityFinding.model_validate(item))
-            target_url = data.get("target_url", default_target_url)
+                        parsed_f = NormalizedSecurityFinding.model_validate(item)
+                        if redact_secrets:
+                            parsed_f = parsed_f.model_copy(
+                                update={"target_url": redact_url(parsed_f.target_url)}
+                            )
+                        findings.append(parsed_f)
+            raw_target = data.get("target_url", default_target_url)
+            target_url = redact_url(raw_target) if redact_secrets else raw_target
             deduped = cls.deduplicate_findings(findings)
             meta = cls.build_report_metadata(
                 target_url=target_url,
                 findings=deduped,
                 scope=[target_url],
                 limitations=data.get("limitations", []),
+                redact_secrets=redact_secrets,
             )
             return SecurityAssessmentReport(metadata=meta, findings=deduped)
 
-        target_url = data.get("target_url", default_target_url)
+        raw_target = data.get("target_url", default_target_url)
+        target_url = redact_url(raw_target) if redact_secrets else raw_target
         meta = cls.build_report_metadata(
             target_url=target_url,
             findings=[],
             scope=[target_url],
             limitations=[],
+            redact_secrets=redact_secrets,
         )
         return SecurityAssessmentReport(metadata=meta, findings=[])
 
@@ -367,7 +419,8 @@ class FindingNormalizer:
 
         If duplicate IDs exist:
         - Prioritize higher verification status (VERIFIED > CORROBORATED > POTENTIAL_INDICATOR > INCONCLUSIVE > REJECTED).
-        - Accumulate evidence count and consolidate evidence IDs.
+        - Accumulate distinct evidence identifiers accurately.
+        - Handle empty evidence collections conservatively without duplicate inflation (taking the max across observations).
         - Preserve distinct parameters and transport locations.
         """
         status_rank: dict[VerificationStatus, int] = {
@@ -410,25 +463,33 @@ class FindingNormalizer:
             )
             primary = group[0]
 
-            # Merge evidence IDs and counts
-            all_ev_ids = list(dict.fromkeys([ev for item in group for ev in item.evidence_ids]))
-            total_ev_count = sum(item.evidence_count for item in group)
+            # Merge evidence IDs and counts conservatively without duplicate inflation
+            all_ev_ids = list(
+                dict.fromkeys([ev for item in group for ev in item.evidence_ids if ev])
+            )
+            if all_ev_ids:
+                # Count distinct evidence records accurately while preserving unindexed records if reported
+                ev_count = max(len(all_ev_ids), max(item.evidence_count for item in group))
+            else:
+                # Conservative fallback for unindexed evidence: take max across duplicates rather than summing
+                ev_count = max(item.evidence_count for item in group)
 
             merged = primary.model_copy(
                 update={
                     "evidence_ids": all_ev_ids,
-                    "evidence_count": max(len(all_ev_ids), total_ev_count),
+                    "evidence_count": ev_count,
                 }
             )
             deduped.append(merged)
 
-        # Sort output findings deterministically by severity (descending), then endpoint, then parameter
+        # Sort output findings deterministically by severity (descending), then endpoint, then parameter, then ID
         deduped.sort(
             key=lambda x: (
                 -severity_rank.get(x.severity, 0),
                 -status_rank.get(x.verification_status, 0),
                 x.endpoint,
                 x.parameter_name,
+                x.id,
             )
         )
         return deduped
@@ -440,8 +501,11 @@ class FindingNormalizer:
         findings: list[NormalizedSecurityFinding],
         scope: list[str],
         limitations: list[str],
+        redact_secrets: bool = True,
     ) -> ReportMetadata:
         """Compute aggregate totals and summary counts for report metadata."""
+        clean_url = redact_url(target_url) if redact_secrets else target_url
+        clean_scope = [redact_url(s) if redact_secrets else s for s in scope]
         sev_counts: dict[str, int] = {s.value: 0 for s in FindingSeverity}
         status_counts: dict[str, int] = {st.value: 0 for st in VerificationStatus}
         cat_counts: dict[str, int] = {c.value: 0 for c in VulnerabilityCategory}
@@ -454,12 +518,12 @@ class FindingNormalizer:
             cat_counts[f.category.value] = cat_counts.get(f.category.value, 0) + 1
 
         return ReportMetadata(
-            target_url=target_url,
+            target_url=clean_url,
             total_findings=len(findings),
             findings_by_severity=sev_counts,
             findings_by_status=status_counts,
             findings_by_category=cat_counts,
-            assessment_scope=scope,
+            assessment_scope=clean_scope,
             limitations=limitations,
         )
 

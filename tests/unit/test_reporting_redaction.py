@@ -14,6 +14,7 @@ from dbshield.reporting.models import (
 from dbshield.reporting.redaction import (
     redact_parameter,
     redact_text,
+    redact_url,
 )
 from dbshield.sqli.models import ParameterLocation
 from dbshield.verification.models import ConfidenceLevel, VerificationStatus
@@ -101,3 +102,52 @@ def test_zero_secret_leakage_across_all_exporters() -> None:
     term_out = TerminalReportExporter().export(report)
     assert synthetic_token not in term_out
     assert "REDACTED" in term_out
+
+
+def test_redact_url_masks_sensitive_query_parameters() -> None:
+    """Verify redact_url masks sensitive query parameters while preserving URL structure and non-sensitive params."""
+    # 1. Sensitive query parameters
+    url = "https://target.local:8080/api/v1/search?q=test&token=secret_tok_123&access_token=acc_tok_456&key=api_key_789&secret=my_sec&page=2&item=a&item=b#section1"
+    cleaned = redact_url(url)
+    assert "secret_tok_123" not in cleaned
+    assert "acc_tok_456" not in cleaned
+    assert "api_key_789" not in cleaned
+    assert "my_sec" not in cleaned
+    assert "token=[REDACTED]" in cleaned
+    assert "access_token=[REDACTED]" in cleaned
+    assert "key=[REDACTED]" in cleaned
+    assert "secret=[REDACTED]" in cleaned
+    # Non-sensitive preserved
+    assert "q=test" in cleaned
+    assert "page=2" in cleaned
+    assert "item=a&item=b" in cleaned  # Repeated parameters preserved
+    # Structure preserved
+    assert cleaned.startswith("https://target.local:8080/api/v1/search?")
+    assert cleaned.endswith("#section1")
+
+    # 2. Additional sensitive parameter names (password, passwd, authorization, api_key)
+    url2 = "http://target.local/auth?user=alice&password=mypassword&passwd=oldpass&authorization=bearer_token&api_key=mykey"
+    cleaned2 = redact_url(url2)
+    assert "mypassword" not in cleaned2
+    assert "oldpass" not in cleaned2
+    assert "bearer_token" not in cleaned2
+    assert "mykey" not in cleaned2
+    assert "user=alice" in cleaned2
+    assert "password=[REDACTED]" in cleaned2
+    assert "passwd=[REDACTED]" in cleaned2
+    assert "authorization=[REDACTED]" in cleaned2
+    assert "api_key=[REDACTED]" in cleaned2
+
+    # 3. URL authority credential masking
+    url3 = "https://admin:super_secret_auth@target.local/dashboard"
+    cleaned3 = redact_url(url3)
+    assert "super_secret_auth" not in cleaned3
+    assert "admin:[REDACTED]@target.local" in cleaned3
+
+    # 4. URLs without query or non-sensitive URLs
+    assert redact_url("https://target.local/home") == "https://target.local/home"
+    assert (
+        redact_url("https://target.local/search?q=apple&page=1")
+        == "https://target.local/search?q=apple&page=1"
+    )
+    assert redact_url("") == ""

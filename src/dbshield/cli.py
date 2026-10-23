@@ -61,7 +61,11 @@ from dbshield.reporting import (
 from dbshield.scope.manager import ScopeManager
 from dbshield.sqli.engine import SQLiEngine
 from dbshield.sqli.models import ParameterLocation, SQLiScanResult
-from dbshield.verification import VerificationEngine, VerificationResult
+from dbshield.verification import (
+    VerificationEngine,
+    VerificationResult,
+    VerificationStatus,
+)
 
 app = typer.Typer(
     name="dbshield",
@@ -2902,6 +2906,11 @@ def report_cmd(
         "--status",
         help="Filter by verification status (e.g., verified, potential_indicator, inconclusive).",
     ),
+    redact: bool = typer.Option(
+        True,
+        "--redact/--no-redact",
+        help="Enable or disable masking of sensitive credentials, parameters, and query values.",
+    ),
 ) -> None:
     """Generate professional, structured security assessment reports across multiple formats."""
     fmt_clean = fmt.lower().strip()
@@ -2934,7 +2943,7 @@ def report_cmd(
         )
         raise typer.Exit(code=1) from exc
 
-    report = FindingNormalizer.from_dict_payload(parsed_data)
+    report = FindingNormalizer.from_dict_payload(parsed_data, redact_secrets=redact)
 
     # Apply optional severity filter
     if severity:
@@ -2960,18 +2969,28 @@ def report_cmd(
             findings=filtered,
             scope=report.metadata.assessment_scope,
             limitations=report.metadata.limitations,
+            redact_secrets=redact,
         )
         report = SecurityAssessmentReport(metadata=meta, findings=filtered)
 
     # Apply optional status filter
     if status:
         stat_clean = status.lower().strip()
+        valid_statuses = {s.value for s in VerificationStatus}
+        if stat_clean not in valid_statuses:
+            print_error(
+                f"Invalid status filter '{status}'.",
+                cause=f"'{status}' is not a valid verification status.",
+                remedy=f"Supported statuses: {', '.join(sorted(valid_statuses))}.",
+            )
+            raise typer.Exit(code=2)
         filtered = [f for f in report.findings if f.verification_status.value == stat_clean]
         meta = FindingNormalizer.build_report_metadata(
             target_url=report.metadata.target_url,
             findings=filtered,
             scope=report.metadata.assessment_scope,
             limitations=report.metadata.limitations,
+            redact_secrets=redact,
         )
         report = SecurityAssessmentReport(metadata=meta, findings=filtered)
 
