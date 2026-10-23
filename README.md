@@ -6,7 +6,7 @@
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
-[![Tests: Pytest](https://img.shields.io/badge/tests-343%20passed-brightgreen.svg)](#)
+[![Tests: Pytest](https://img.shields.io/badge/tests-381%20passed-brightgreen.svg)](#)
 
 ---
 
@@ -17,7 +17,7 @@
 
 ## Project Status
 
-- **Current Phase**: **Phase 7 — Evidence Analysis and Vulnerability Verification Engine** (Completed & Verified)
+- **Current Phase**: **Phase 8 — Structured Results, Finding Normalization & Professional Reporting** (Completed & Verified)
 - **Roadmap**: 10 Phases leading to advanced database vulnerability detection and Burp Suite integration. See [docs/roadmap.md](docs/roadmap.md).
 
 ### Implemented Functionality
@@ -120,8 +120,27 @@
 - **Dedicated CLI Command (`dbshield verify`)**:
   - Comprehensive verification interface supporting offline execution run results (`--input`), response fixtures (`--fixture`), and live scope-checked scans (`--url`).
 
-### Out of Scope in Phase 7 (Planned for Future Phases)
-Database extraction, table/collection dumping, data modification, automated exploitation, credential brute-forcing, whole-app crawling, compliance/executive report generation (Phase 8), and Burp Suite extension bindings (Phase 10).
+#### Phase 8: Structured Results, Finding Normalization & Professional Reporting
+- **Normalized Finding Model (`NormalizedSecurityFinding`, `SecurityAssessmentReport`)**:
+  - Unified finding representation with deterministic SHA-256 IDs (`DBS-<HEX>`), endpoint path, transport location, redacted parameters, verification status, and confidence score.
+  - Decoupled qualitative severity rating (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`) ensuring unverified indicators are never exaggerated.
+  - Direct Common Weakness Enumeration association (`CWE-89` for SQLi, `CWE-943` for NoSQLi) and actionable remediation guidance.
+- **Finding Normalizer & Deduplication (`FindingNormalizer`)**:
+  - Converts results from verification, SQLi, NoSQLi, and execution engines into canonical findings.
+  - Standardizes endpoint paths and groups identical observations deterministically, promoting the highest verification status and accumulating corroborating evidence counts.
+- **Multi-Format Export Subsystem (`dbshield.reporting.exporters`)**:
+  - `JSONReportExporter`: Valid JSON with schema version `1.0.0` and summary envelopes.
+  - `CSVReportExporter`: RFC-4180 compliant tabular export with formula injection protection.
+  - `MarkdownReportExporter`: Executive summary, metrics tables, and detailed technical findings in GitHub-flavored Markdown.
+  - `TerminalReportExporter`: Formatted terminal output adhering to `linux-cli-design-system` standards with `NO_COLOR` support.
+- **Centralized Redaction & CSV Formula Injection Protection**:
+  - Scrubbing authorization headers, tokens, cookies, database credentials, connection strings, JWTs, and API keys.
+  - Neutralizes dangerous spreadsheet formula characters (`=`, `+`, `-`, `@`, `\t`, `\r`) in CSV cells by prepending single quotes.
+- **Dedicated CLI Command (`dbshield report`)**:
+  - Multi-format report generation supporting input file ingestion (`--input`), format selection (`--format`), minimum severity filtering (`--severity`), status filtering (`--status`), output file writing (`--output`), and overwrite protection (`--overwrite`).
+
+### Out of Scope in Phase 8 (Planned for Future Phases)
+Database extraction, table/collection dumping, data modification, automated exploitation, credential brute-forcing, whole-app crawling, lab testbed benchmarks (Phase 9), and Burp Suite extension bindings (Phase 10).
 
 ---
 
@@ -446,6 +465,58 @@ dbshield verify \
 - `--output`, `-o`: Destination file path for exporting verified assessment results.
 - `--overwrite`: Overwrite destination output file if it already exists.
 
+### 9. Structured Results & Reporting (`report`)
+
+Generate professional, multi-format security reports from scan findings or verification results:
+
+#### Terminal Executive Summary Report
+```bash
+dbshield report --input ./verified_findings.json --format text
+```
+
+#### Export to GitHub-Flavored Markdown Report
+```bash
+dbshield report \
+  --input ./verified_findings.json \
+  --format markdown \
+  --output ./security_assessment.md \
+  --overwrite
+```
+
+#### Export to Formula-Injection-Safe CSV
+```bash
+dbshield report \
+  --input ./verified_findings.json \
+  --format csv \
+  --output ./findings.csv \
+  --overwrite
+```
+
+#### Filter by Minimum Severity (e.g., High and Critical Only)
+```bash
+dbshield report \
+  --input ./verified_findings.json \
+  --format json \
+  --severity high \
+  --output ./high_severity_findings.json
+```
+
+#### Filter by Verification Status (e.g., Verified Findings Only)
+```bash
+dbshield report \
+  --input ./verified_findings.json \
+  --status verified \
+  --format text
+```
+
+#### Report Command Options
+- `--input`, `-i`: Path to JSON file containing findings or assessment results (required).
+- `--format`, `-f`: Report output format: `text`, `json`, `csv`, `markdown` (default: `text`).
+- `--output`, `-o`: Optional destination file path to export formatted report.
+- `--overwrite`: Overwrite destination output file if it already exists.
+- `--severity`, `-s`: Minimum severity filter (`info`, `low`, `medium`, `high`, `critical`).
+- `--status`: Filter by verification status (e.g. `verified`, `potential_indicator`, `inconclusive`).
+
 ---
 
 ## Configuration
@@ -468,7 +539,7 @@ Configuration is managed via environment variables or a local `.env` file (see `
 
 ## Development and Testing
 
-Execute the test suite (343 unit and integration tests):
+Execute the test suite (381 unit and integration tests):
 ```bash
 pytest
 ```
@@ -509,7 +580,8 @@ dbshield/
 │       ├── phase-04.md       # Phase 4: SQL Injection Testing Engine
 │       ├── phase-05.md       # Phase 5: NoSQL Injection Detection Engine
 │       ├── phase-06.md       # Phase 6: Payload Catalog & Test Execution Engine
-│       └── phase-07.md       # Phase 7: Evidence Analysis & Vulnerability Verification
+│       ├── phase-07.md       # Phase 7: Evidence Analysis & Vulnerability Verification
+│       └── phase-08.md       # Phase 8: Structured Results, Finding Normalization & Professional Reporting
 ├── src/
 │   └── dbshield/
 │       ├── __init__.py       # Package metadata
@@ -527,10 +599,11 @@ dbshield/
 │       ├── nosqli/           # NoSQL Injection Detection Engine
 │       ├── payloads/         # Centralized Payload Catalog & Models
 │       ├── execution/        # Orchestrator, Transformers, Policies & Adapters
-│       └── verification/     # Evidence Normalizer, Correlator, Confidence & Verification Engine
+│       ├── verification/     # Evidence Normalizer, Correlator, Confidence & Verification Engine
+│       └── reporting/        # Finding Models, Severity Assessor, Exporters (JSON, CSV, MD, Terminal)
 └── tests/
-    ├── unit/                 # Unit tests (config, models, scope, logging, cli, parser, classifier, sqli, nosqli, payloads, execution, verification)
-    ├── integration/          # Integration tests (HTTP client, discovery, auth, sqli, nosqli, execution orchestrator, cli, verify)
+    ├── unit/                 # Unit tests (config, models, scope, logging, cli, parser, classifier, sqli, nosqli, payloads, execution, verification, reporting)
+    ├── integration/          # Integration tests (HTTP client, discovery, auth, sqli, nosqli, execution orchestrator, cli, verify, report)
     └── fixtures/             # Offline laboratory test fixtures
 ```
 

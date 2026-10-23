@@ -511,7 +511,83 @@ The Phase 4 SQL Injection Detection Engine provides modular, defensive, and expl
 
 ---
 
-## 10. Extension Points for Future Phases
+---
+
+## 10. Structured Results, Finding Normalization and Reporting Subsystem (`dbshield.reporting`)
+
+### 10.1 Architecture and Report Generation Flow
+
+```
++---------------------------------------------------------------------------------+
+|                                 Input Sources                                   |
+|   (VerificationResult / SQLiScanResult / NoSQLScanResult / JSON Dict Fixtures)  |
++----------------------------------------+----------------------------------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         |       FindingNormalizer       |
+                         | (Canonical ID & Deduplication)|
+                         +---------------+---------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         |       SeverityAssessor        |
+                         |  (Decoupled Severity & CWE)   |
+                         +---------------+---------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         |     Evidence Redaction &      |
+                         |  CSV Formula Neutralization   |
+                         +---------------+---------------+
+                                         |
+                                         v
+                 +-----------------------+-----------------------+
+                 |                       |                       |
+                 v                       v                       v
+      +---------------------+ +---------------------+ +---------------------+
+      |  JSONReportExporter | |  CSVReportExporter  | | MarkdownReportExp.  |
+      | (Schema 1.0.0 Valid)| | (RFC-4180 + DDE Safe| | (GFM Exec Summary)  |
+      +---------------------+ +---------------------+ +---------------------+
+                                         |
+                                         v
+                              +---------------------+
+                              | TerminalReportExp.  |
+                              | (ANSI / NO_COLOR)   |
+                              +---------------------+
+```
+
+### 10.2 Key Abstractions
+
+1. **`NormalizedSecurityFinding` (`dbshield.reporting.models`)**:
+   - Unified, immutable representation of an assessment finding.
+   - Deterministic SHA-256 finding identifier derived from canonical target coordinates: `DBS-HASH(target_url | category | location | parameter | technique)`.
+   - Explicitly records endpoint, HTTP method, transport parameter location, sanitized parameter name, verification status, confidence level/score, decoupled severity, actionable remediation, and Common Weakness Enumeration mappings (`CWE-89`, `CWE-943`).
+
+2. **`FindingNormalizer` (`dbshield.reporting.normalizer`)**:
+   - Ingests results across Phase 4 (SQLi), Phase 5 (NoSQLi), Phase 6 (Execution), and Phase 7 (Verification).
+   - Standardizes endpoint paths and transport locations.
+   - Deduplicates identical observations while accumulating corroborating evidence counts and selecting the highest verification status.
+   - Builds aggregate `ReportMetadata` breakdowns by severity, verification status, and vulnerability category.
+
+3. **`SeverityAssessor` (`dbshield.reporting.severity`)**:
+   - Enforces an evidence-based, transparent severity policy (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`).
+   - Decouples vulnerability impact from observation certainty.
+   - Associates confirmed injection findings with standardized CWE definitions and actionable remediation guidance.
+
+4. **`escape_csv_formula` & `redact_text` (`dbshield.reporting.redaction`)**:
+   - Neutralizes spreadsheet formula injection (CSV/DDE injection) by escaping leading dangerous characters (`=`, `+`, `-`, `@`, `\t`, `\r`) with single quotes.
+   - Provides centralized redaction of authorization headers, tokens, cookies, database credentials, and passwords across all reporting outputs.
+
+5. **Exporters (`dbshield.reporting.exporters`)**:
+   - `JSONReportExporter`: Valid JSON with schema envelope version `1.0.0` and deterministic key ordering.
+   - `CSVReportExporter`: RFC-4180 compliant tabular export with formula injection protection.
+   - `MarkdownReportExporter`: Executive summary, metrics tables, detailed technical observations, and scope limitations.
+   - `TerminalReportExporter`: Structured console output adhering to `linux-cli-design-system` standards with `NO_COLOR` support.
+
+---
+
+## 11. Extension Points for Future Phases
 
 | Phase | Module | Integration Point & Planned Responsibility | Status |
 | :--- | :--- | :--- | :--- |
@@ -522,7 +598,6 @@ The Phase 4 SQL Injection Detection Engine provides modular, defensive, and expl
 | **Phase 5: NoSQLi Engine** | `dbshield.nosqli` | Controlled NoSQL injection detection routines with nested JSON support. | **Completed** |
 | **Phase 6: Payload Execution**| `dbshield.payloads` / `dbshield.execution` | Reusable payload catalog, isolated transformer, budget policies, engine orchestrator. | **Completed** |
 | **Phase 7: Evidence Analysis**| `dbshield.verification` | Normalized evidence, correlation, explainable confidence, verification state machine, false-positive reduction. | **Completed** |
-| **Phase 8: Reporting** | `dbshield.reporting` | Formatted JSON, HTML, and Markdown assessment summaries. | Planned |
+| **Phase 8: Reporting** | `dbshield.reporting` | Normalized findings, severity decoupling, CSV injection protection, multi-format reports (JSON, CSV, MD, Terminal), `dbshield report` CLI. | **Completed** |
 | **Phase 9: Lab Validation** | `tests.lab` | Automated test suite execution against isolated test targets. | Planned |
 | **Phase 10: Burp Suite** | `dbshield.integrations` | Upstream proxy adapters and Burp Suite extension bindings. | Planned |
-

@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Phase 8 Structured Results, Finding Normalization & Professional Reporting**: Dedicated subsystem (`dbshield.reporting`) for converting cross-engine detection and verification results into normalized, machine-readable findings and multi-format reports.
+- **Normalized Finding Model (`NormalizedSecurityFinding`, `SecurityAssessmentReport`)**: Unified finding model with deterministic SHA-256 IDs, technical categorizations, endpoint coordinates, decoupled severity ratings, verification statuses, confidence scores, and actionable remediation.
+- **Finding Normalizer & Deduplicator (`FindingNormalizer`)**: Ingests verification results, SQLi results, NoSQLi results, and raw fixtures, standardizes endpoint paths, deduplicates identical observations, and promotes highest verification status while accumulating evidence counts.
+- **Transparent Severity & Prioritization Policy (`SeverityAssessor`)**: Explicit severity ratings (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`) strictly decoupled from verification confidence, with concrete Common Weakness Enumeration associations (`CWE-89` for SQLi, `CWE-943` for NoSQLi) and prioritized remediation.
+- **Multi-Format Export Subsystem (`dbshield.reporting.exporters`)**:
+  - `JSONReportExporter`: Valid JSON export with schema version `1.0.0` and summary envelopes.
+  - `CSVReportExporter`: RFC-4180 compliant tabular export with formula injection protection.
+  - `MarkdownReportExporter`: Executive summary, metrics tables, and detailed technical findings in GitHub-flavored Markdown.
+  - `TerminalReportExporter`: Formatted terminal output adhering to `linux-cli-design-system` standards with `NO_COLOR` support.
+- **CLI Report Command (`dbshield report`)**: Command-line interface supporting input JSON ingestion (`--input`), format selection (`--format`), minimum severity filtering (`--severity`), status filtering (`--status`), output file writing (`--output`), and overwrite protection (`--overwrite`).
+- **Expanded Test Suite**: Added 38 new unit and integration tests (381 total tests passing 100%, 86% overall coverage, clean Ruff and Mypy).
+
+### Security
+- **CSV Formula Injection (DDE) Neutralization**: Untrusted cell values starting with dangerous spreadsheet formula characters (`=`, `+`, `-`, `@`, `\t`, `\r`) are automatically escaped with leading single quotes.
+- **Centralized Credential Redaction**: Strict scrubbing of authorization headers, bearer tokens, cookies, database credentials, connection strings, JWTs, and API keys across all report formats.
+- **Decoupled Severity Guarantees**: Verification confidence is strictly decoupled from severity to ensure unverified indicators are never exaggerated.
+
+## [0.7.0] - 2026-10-23
+
+### Added
 - **Phase 7 Evidence Analysis and Vulnerability Verification Engine**: Dedicated subsystem (`dbshield.verification`) for cross-engine evidence normalization, candidate correlation, explainable confidence evaluation, and lifecycle state management.
 - **Evidence Normalization & Provenance Model (`NormalizedEvidence`, `EvidenceProvenance`)**: Standardized evidence representation preserving links to original test cases, payloads, and executions, with automated credential scrubbing.
 - **Evidence Correlation & Deduplication (`EvidenceCorrelator`)**: Deterministic grouping by canonical target URL, vulnerability class, transport location, and parameter name with duplicate suppression and audit logging.

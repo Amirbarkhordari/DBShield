@@ -50,6 +50,14 @@ from dbshield.payloads.models import (
     PayloadRiskLevel,
     SecurityPayload,
 )
+from dbshield.reporting import (
+    CSVReportExporter,
+    FindingNormalizer,
+    JSONReportExporter,
+    MarkdownReportExporter,
+    SecurityAssessmentReport,
+    TerminalReportExporter,
+)
 from dbshield.scope.manager import ScopeManager
 from dbshield.sqli.engine import SQLiEngine
 from dbshield.sqli.models import ParameterLocation, SQLiScanResult
@@ -2856,6 +2864,150 @@ def verify_cmd(
         sys.stdout.write(json_output + "\n")
     else:
         sys.stdout.write(rendered_text + "\n")
+
+
+@app.command(name="report")
+def report_cmd(
+    input_file: str = typer.Option(
+        ...,
+        "--input",
+        "-i",
+        help="Path to JSON file containing findings or assessment results to generate report from.",
+    ),
+    fmt: str = typer.Option(
+        "text",
+        "--format",
+        "-f",
+        help="Report output format: text, json, csv, markdown.",
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Optional file path to export formatted report.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Overwrite destination output file if it already exists.",
+    ),
+    severity: str | None = typer.Option(
+        None,
+        "--severity",
+        "-s",
+        help="Minimum severity filter: info, low, medium, high, critical.",
+    ),
+    status: str | None = typer.Option(
+        None,
+        "--status",
+        help="Filter by verification status (e.g., verified, potential_indicator, inconclusive).",
+    ),
+) -> None:
+    """Generate professional, structured security assessment reports across multiple formats."""
+    fmt_clean = fmt.lower().strip()
+    valid_formats = {"text", "json", "csv", "markdown"}
+    if fmt_clean not in valid_formats:
+        print_error(
+            f"Invalid format '{fmt}'.",
+            cause=f"'{fmt}' is not a recognized report format.",
+            remedy=f"Supported formats: {', '.join(sorted(valid_formats))}.",
+        )
+        raise typer.Exit(code=2)
+
+    in_path = Path(input_file)
+    if not in_path.exists() or not in_path.is_file():
+        print_error(
+            f"Input file '{input_file}' not found.",
+            cause="The specified path does not exist or is not a readable regular file.",
+            remedy="Check the file path and verify read permissions.",
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        raw_text = in_path.read_text(encoding="utf-8")
+        parsed_data = json.loads(raw_text)
+    except Exception as exc:
+        print_error(
+            f"Failed to parse input file '{input_file}'.",
+            cause=str(exc),
+            remedy="Ensure input file is valid JSON matching DBShield finding schemas.",
+        )
+        raise typer.Exit(code=1) from exc
+
+    report = FindingNormalizer.from_dict_payload(parsed_data)
+
+    # Apply optional severity filter
+    if severity:
+        sev_clean = severity.lower().strip()
+        sev_order = {
+            "info": 1,
+            "low": 2,
+            "medium": 3,
+            "high": 4,
+            "critical": 5,
+        }
+        if sev_clean not in sev_order:
+            print_error(
+                f"Invalid severity filter '{severity}'.",
+                cause=f"'{severity}' is not a valid severity level.",
+                remedy="Supported severities: info, low, medium, high, critical.",
+            )
+            raise typer.Exit(code=2)
+        min_rank = sev_order[sev_clean]
+        filtered = [f for f in report.findings if sev_order.get(f.severity.value, 0) >= min_rank]
+        meta = FindingNormalizer.build_report_metadata(
+            target_url=report.metadata.target_url,
+            findings=filtered,
+            scope=report.metadata.assessment_scope,
+            limitations=report.metadata.limitations,
+        )
+        report = SecurityAssessmentReport(metadata=meta, findings=filtered)
+
+    # Apply optional status filter
+    if status:
+        stat_clean = status.lower().strip()
+        filtered = [f for f in report.findings if f.verification_status.value == stat_clean]
+        meta = FindingNormalizer.build_report_metadata(
+            target_url=report.metadata.target_url,
+            findings=filtered,
+            scope=report.metadata.assessment_scope,
+            limitations=report.metadata.limitations,
+        )
+        report = SecurityAssessmentReport(metadata=meta, findings=filtered)
+
+    # Render selected format
+    if fmt_clean == "json":
+        rendered = JSONReportExporter().export(report)
+    elif fmt_clean == "csv":
+        rendered = CSVReportExporter().export(report)
+    elif fmt_clean == "markdown":
+        rendered = MarkdownReportExporter().export(report)
+    else:
+        rendered = TerminalReportExporter().export(report)
+
+    # Output file handling
+    if output is not None:
+        out_path = Path(output)
+        if out_path.exists() and not overwrite:
+            print_error(
+                f"Output destination '{output}' already exists.",
+                cause="Target file exists and --overwrite was not specified.",
+                remedy="Provide a different output path or specify --overwrite to replace it.",
+            )
+            raise typer.Exit(code=1)
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(rendered, encoding="utf-8")
+            print_success(f"Report successfully exported to '{out_path}'.")
+        except Exception as exc:
+            print_error(
+                f"Failed to write report to '{out_path}'.",
+                cause=str(exc),
+                remedy="Verify write permissions for destination path.",
+            )
+            raise typer.Exit(code=1) from exc
+
+    sys.stdout.write(rendered + ("\n" if not rendered.endswith("\n") else ""))
     sys.stdout.flush()
     raise typer.Exit(code=0)
 
