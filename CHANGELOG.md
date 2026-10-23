@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Phase 7 Evidence Analysis and Vulnerability Verification Engine**: Dedicated subsystem (`dbshield.verification`) for cross-engine evidence normalization, candidate correlation, explainable confidence evaluation, and lifecycle state management.
+- **Evidence Normalization & Provenance Model (`NormalizedEvidence`, `EvidenceProvenance`)**: Standardized evidence representation preserving links to original test cases, payloads, and executions, with automated credential scrubbing.
+- **Evidence Correlation & Deduplication (`EvidenceCorrelator`)**: Deterministic grouping by canonical target URL, vulnerability class, transport location, and parameter name with duplicate suppression and audit logging.
+- **Explainable Confidence Assessor (`ConfidenceAssessor`)**: Transparent multi-factor scoring (0.0 to 1.0) distinguishing observation certainty from vulnerability exploitability certainty, evaluating database error specificity, baseline stability, differential divergence, and detector agreement.
+- **Formal Verification State Machine (`VerificationStateMachine`)**: Explicit 8-state finding lifecycle with strict transition graph enforcement, domain prerequisite checks, and immutable transition audit logging.
+- **False-Positive Elimination Rules**: Deterministic rejection of pre-existing baseline errors, generic HTTP 400/500 errors lacking database error patterns, unstable baselines, and contradictory responses.
+- **CLI Verify Command (`dbshield verify`)**: Command-line verification interface supporting offline execution results (`--input`), response fixtures (`--fixture`), and live scope-checked execution assessment (`--url`).
+- **Expanded Test Suite**: Added 52 new unit and integration tests (343 total tests passing 100%, 86% overall project coverage, 94% verification package coverage, clean Ruff and Mypy).
+
+### Security
+- **Pure Offline Verification**: Evidence analysis executes strictly in-memory without initiating network requests.
+- **Defensive Safety Architecture**: Zero active exploitation, zero database dumping, zero schema extraction, and bounded request budgets.
+- **Zero-Secret Reporting**: Strict redaction of authentication headers, bearer tokens, cookies, JWTs, and sensitive parameter references from evidence snippets and assessment reports.
+- **Scope Verification**: Live CLI assessment strictly enforces `ScopeManager` pre-flight authorization.
+
 ## [0.6.0] - 2026-10-22
 
 ### Added

@@ -440,7 +440,78 @@ The Phase 4 SQL Injection Detection Engine provides modular, defensive, and expl
 
 ---
 
-## 9. Extension Points for Future Phases
+---
+
+## 9. Evidence Analysis and Vulnerability Verification Subsystem (`dbshield.verification`)
+
+### 9.1 Architecture and Verification Flow
+
+```
++---------------------------------------------------------------------------------+
+|                                 Input Sources                                   |
+|   (SQLiFinding / NoSQLFinding / ExecutionRunResult / Offline Response Fixtures) |
++----------------------------------------+----------------------------------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         |       EvidenceNormalizer      |
+                         |  (Provenance & Cred Redaction)|
+                         +---------------+---------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         |       EvidenceCorrelator      |
+                         |  (Deterministic Deduplication)|
+                         +---------------+---------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         |       ConfidenceAssessor      |
+                         |  (Obs vs Vuln Certainty)      |
+                         +---------------+---------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         |    VerificationStateMachine   |
+                         |   (8-State Lifecycle & Rules) |
+                         +---------------+---------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         |       VerificationResult      |
+                         | (Audit Trails, Zero-Secrets)  |
+                         +-------------------------------+
+```
+
+### 9.2 Key Abstractions
+
+1. **`EvidenceNormalizer` (`dbshield.verification.normalizer`)**:
+   - Converts heterogeneous signals from SQLi, NoSQLi, and Phase 6 execution runs into standardized `NormalizedEvidence` models.
+   - Preserves full provenance (`EvidenceProvenance`): target URL, candidate parameter, transport location, test case ID, payload ID, execution ID, and run ID.
+   - Automatically sanitizes sensitive credentials, authorization headers (Bearer, Basic), cookies, JWTs, and API tokens from snippets and parameter names.
+
+2. **`EvidenceCorrelator` (`dbshield.verification.correlator`)**:
+   - Deterministically groups evidence items using canonical fingerprints (URL, vulnerability class, transport location, parameter name).
+   - Isolates distinct candidate findings while deduplicating repeated identical observations across execution iterations.
+   - Records audit notes explaining deduplication actions and retains all originating execution identifiers.
+
+3. **`ConfidenceAssessor` (`dbshield.verification.confidence`)**:
+   - Evaluates multi-factor evidence to generate transparent composite scores (0.0 to 1.0).
+   - Explicitly distinguishes observation certainty from vulnerability exploitability certainty.
+   - Evaluates database error specificity (MySQL, PostgreSQL, MongoDB, SQLite vs generic), baseline stability, differential divergence, and detector agreement.
+
+4. **`VerificationStateMachine` (`dbshield.verification.state_machine`)**:
+   - Enforces an explicit 8-state lifecycle graph (`POTENTIAL_INDICATOR`, `UNDER_ANALYSIS`, `VERIFICATION_REQUIRED`, `CORROBORATED`, `VERIFIED`, `INCONCLUSIVE`, `REJECTED`, `UNVERIFIABLE`).
+   - Validates domain prerequisites: blocks `VERIFIED` on failed executions, pre-existing baseline errors, unstable baselines, or generic server errors.
+   - Rejects illegal transitions by raising `InvalidStateTransitionError` and records an immutable audit history (`StateTransitionRecord`).
+
+5. **`VerificationEngine` (`dbshield.verification.engine`)**:
+   - High-level orchestrator coordinating normalization, correlation, confidence scoring, state machine evaluation, and false-positive elimination.
+   - Operates purely offline without initiating outbound network requests.
+
+---
+
+## 10. Extension Points for Future Phases
 
 | Phase | Module | Integration Point & Planned Responsibility | Status |
 | :--- | :--- | :--- | :--- |
@@ -450,7 +521,8 @@ The Phase 4 SQL Injection Detection Engine provides modular, defensive, and expl
 | **Phase 4: SQLi Engine** | `dbshield.sqli` | Controlled SQL injection detection routines against target inputs. | **Completed** |
 | **Phase 5: NoSQLi Engine** | `dbshield.nosqli` | Controlled NoSQL injection detection routines with nested JSON support. | **Completed** |
 | **Phase 6: Payload Execution**| `dbshield.payloads` / `dbshield.execution` | Reusable payload catalog, isolated transformer, budget policies, engine orchestrator. | **Completed** |
-| **Phase 7: Evidence Analysis**| `dbshield.analysis` | Response anomaly detection, error pattern matching, differential analysis.| Planned |
+| **Phase 7: Evidence Analysis**| `dbshield.verification` | Normalized evidence, correlation, explainable confidence, verification state machine, false-positive reduction. | **Completed** |
 | **Phase 8: Reporting** | `dbshield.reporting` | Formatted JSON, HTML, and Markdown assessment summaries. | Planned |
 | **Phase 9: Lab Validation** | `tests.lab` | Automated test suite execution against isolated test targets. | Planned |
 | **Phase 10: Burp Suite** | `dbshield.integrations` | Upstream proxy adapters and Burp Suite extension bindings. | Planned |
+

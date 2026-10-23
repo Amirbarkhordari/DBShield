@@ -63,3 +63,11 @@ class AuthenticationError(DBShieldError):
 
 class CLIExecutionError(DBShieldError):
     """Raised when CLI command execution fails due to invalid parameters or runtime conditions."""
+
+
+class VerificationError(DBShieldError):
+    """Raised when evidence verification fails due to malformed data or evaluation error."""
+
+
+class InvalidStateTransitionError(VerificationError):
+    """Raised when an illegal lifecycle state transition is attempted on a finding."""

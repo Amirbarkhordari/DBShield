@@ -6,7 +6,7 @@
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
-[![Tests: Pytest](https://img.shields.io/badge/tests-291%20passed-brightgreen.svg)](#)
+[![Tests: Pytest](https://img.shields.io/badge/tests-343%20passed-brightgreen.svg)](#)
 
 ---
 
@@ -17,7 +17,7 @@
 
 ## Project Status
 
-- **Current Phase**: **Phase 6 — Payload Management and Test Execution Engine** (Completed & Verified)
+- **Current Phase**: **Phase 7 — Evidence Analysis and Vulnerability Verification Engine** (Completed & Verified)
 - **Roadmap**: 10 Phases leading to advanced database vulnerability detection and Burp Suite integration. See [docs/roadmap.md](docs/roadmap.md).
 
 ### Implemented Functionality
@@ -100,8 +100,28 @@
   - `dbshield payloads`: list, filter, inspect, and validate payload definitions.
   - `dbshield execute`: run multi-engine test runs across online targets or offline JSON fixtures.
 
-### Out of Scope in Phase 6 (Planned for Future Phases)
-Database extraction, table/collection dumping, data modification, automated exploitation, credential brute-forcing, whole-app crawling, evidence corroboration and false-positive elimination (Phase 7), and Burp Suite extension bindings (Phase 10).
+#### Phase 7: Evidence Analysis and Vulnerability Verification Engine
+- **Normalized Evidence & Provenance Model (`NormalizedEvidence`, `EvidenceProvenance`)**:
+  - Standardized representations capturing error signatures, differential pairs, status differences, similarity metrics, and execution traces.
+  - Full provenance tracking linking evidence to target endpoints, parameters, transport locations, test IDs, payload IDs, and execution runs.
+  - Automated credential scrubbing: sensitive parameters (`password`, `token`, etc.), authorization headers, bearer tokens, cookies, JWTs, and API keys are redacted from snippets and parameter names.
+- **Deterministic Correlation & Deduplication (`EvidenceCorrelator`)**:
+  - Groups evidence by canonical target URL, vulnerability class, transport location, and parameter name while preserving distinct findings.
+  - Eliminates duplicate observations across repeated runs while preserving execution references and logging audit notes.
+- **Explainable Confidence Assessor (`ConfidenceAssessor`)**:
+  - Multi-factor scoring (0.0 to 1.0) with separate observation confidence and vulnerability confidence.
+  - Calibrated rubric evaluating database error specificity (MySQL, PostgreSQL, MongoDB, SQLite vs generic), baseline stability, differential divergence, and detector agreement.
+- **Formal Verification State Machine (`VerificationStateMachine`)**:
+  - Explicit 8-state finding lifecycle (`POTENTIAL_INDICATOR`, `UNDER_ANALYSIS`, `VERIFICATION_REQUIRED`, `CORROBORATED`, `VERIFIED`, `INCONCLUSIVE`, `REJECTED`, `UNVERIFIABLE`).
+  - Strict domain prerequisites: failed executions, pre-existing baseline errors, unstable baselines, or generic server errors are prevented from confirming vulnerabilities.
+  - Enforces valid transition graphs and maintains an immutable transition audit trail.
+- **Evidence-Based False-Positive Elimination**:
+  - Automatically identifies and rejects pre-existing baseline database faults, generic HTTP 400/500 errors, unstable baselines, and contradictory responses.
+- **Dedicated CLI Command (`dbshield verify`)**:
+  - Comprehensive verification interface supporting offline execution run results (`--input`), response fixtures (`--fixture`), and live scope-checked scans (`--url`).
+
+### Out of Scope in Phase 7 (Planned for Future Phases)
+Database extraction, table/collection dumping, data modification, automated exploitation, credential brute-forcing, whole-app crawling, compliance/executive report generation (Phase 8), and Burp Suite extension bindings (Phase 10).
 
 ---
 
@@ -392,6 +412,40 @@ dbshield execute \
 - `--output`, `-o`: File path to export execution run results.
 - `--overwrite`: Overwrite destination output file if it exists.
 
+### 8. Evidence Analysis and Vulnerability Verification (`verify`)
+
+Analyze candidate findings from previous phases, eliminate false positives, and produce verified, audit-traceable results:
+
+#### Verify an Existing Scan or Execution JSON Result File
+```bash
+dbshield verify --input ./execution_run.json
+```
+
+#### Verify Offline Laboratory Fixture (Zero Network Traffic)
+```bash
+dbshield verify --fixture ./tests/fixtures/sqli_sample.json
+```
+
+#### Run Live Scope-Checked Assessment and Full Verification
+```bash
+dbshield verify \
+  --url https://app.example.com/item?id=1 \
+  --engine sqli \
+  --format json \
+  --output ./verified_findings.json \
+  --overwrite
+```
+
+#### Verify Command Options
+- `--input`, `-i`: Path to JSON file containing previous scan findings or execution run results.
+- `--fixture`: Path to JSON file containing captured baseline and test responses.
+- `--url`, `-u`: Target web application URL to assess and immediately verify.
+- `--engine`, `-e`: Target detection engine (`sqli`, `nosqli`, or `all`, default `all`).
+- `--param`, `-p`: Specific candidate parameter to test and verify.
+- `--format`, `-f`: Output format (`text` or `json`, default `text`).
+- `--output`, `-o`: Destination file path for exporting verified assessment results.
+- `--overwrite`: Overwrite destination output file if it already exists.
+
 ---
 
 ## Configuration
@@ -414,7 +468,7 @@ Configuration is managed via environment variables or a local `.env` file (see `
 
 ## Development and Testing
 
-Execute the test suite (291 unit and integration tests):
+Execute the test suite (343 unit and integration tests):
 ```bash
 pytest
 ```
@@ -454,7 +508,8 @@ dbshield/
 │       ├── phase-03.md       # Phase 3: HTTP Request & Session Management
 │       ├── phase-04.md       # Phase 4: SQL Injection Testing Engine
 │       ├── phase-05.md       # Phase 5: NoSQL Injection Detection Engine
-│       └── phase-06.md       # Phase 6: Payload Catalog & Test Execution Engine
+│       ├── phase-06.md       # Phase 6: Payload Catalog & Test Execution Engine
+│       └── phase-07.md       # Phase 7: Evidence Analysis & Vulnerability Verification
 ├── src/
 │   └── dbshield/
 │       ├── __init__.py       # Package metadata
@@ -471,10 +526,11 @@ dbshield/
 │       ├── sqli/             # SQL Injection Detection Engine
 │       ├── nosqli/           # NoSQL Injection Detection Engine
 │       ├── payloads/         # Centralized Payload Catalog & Models
-│       └── execution/        # Orchestrator, Transformers, Policies & Adapters
+│       ├── execution/        # Orchestrator, Transformers, Policies & Adapters
+│       └── verification/     # Evidence Normalizer, Correlator, Confidence & Verification Engine
 └── tests/
-    ├── unit/                 # Unit tests (config, models, scope, logging, cli, parser, classifier, sqli, nosqli, payloads, execution)
-    ├── integration/          # Integration tests (HTTP client, discovery, auth, sqli, nosqli, execution orchestrator, cli)
+    ├── unit/                 # Unit tests (config, models, scope, logging, cli, parser, classifier, sqli, nosqli, payloads, execution, verification)
+    ├── integration/          # Integration tests (HTTP client, discovery, auth, sqli, nosqli, execution orchestrator, cli, verify)
     └── fixtures/             # Offline laboratory test fixtures
 ```
 

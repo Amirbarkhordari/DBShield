@@ -53,6 +53,7 @@ from dbshield.payloads.models import (
 from dbshield.scope.manager import ScopeManager
 from dbshield.sqli.engine import SQLiEngine
 from dbshield.sqli.models import ParameterLocation, SQLiScanResult
+from dbshield.verification import VerificationEngine, VerificationResult
 
 app = typer.Typer(
     name="dbshield",
@@ -2354,6 +2355,495 @@ def execute_cmd(
                 json_output if fmt_clean == "json" else rendered_text, encoding="utf-8"
             )
             print_success(f"Execution run results successfully exported to '{out_path}'.")
+        except Exception as exc:
+            print_error(
+                f"Failed to write results to '{out_path}'.",
+                cause=str(exc),
+                remedy="Verify write permissions for destination path.",
+            )
+            raise typer.Exit(code=1) from exc
+
+    if fmt_clean == "json":
+        sys.stdout.write(json_output + "\n")
+    else:
+        sys.stdout.write(rendered_text + "\n")
+    sys.stdout.flush()
+    raise typer.Exit(code=0)
+
+
+def _format_verification_report(result: VerificationResult) -> str:
+    """Format structured evidence analysis and verification results for terminal presentation."""
+    lines = [
+        "=" * 80,
+        "           DBShield Evidence Analysis and Vulnerability Verification            ",
+        "=" * 80,
+        f"  Target Scope:           {result.target_url}",
+        f"  Result ID:              {result.result_id}",
+        f"  Engine Spec Version:    {result.assessment_version}",
+        f"  Evaluation Timestamp:   {result.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}",
+        "-" * 80,
+        "  Verification Summary Metrics:",
+        f"    Total Findings Evaluated:          {result.summary.total_evaluated}",
+        f"    Verified Vulnerabilities:          {result.summary.verified_count}",
+        f"    Corroborated Signals:              {result.summary.corroborated_count}",
+        f"    Potential Indicators:              {result.summary.potential_indicator_count}",
+        f"    Inconclusive Assessments:          {result.summary.inconclusive_count}",
+        f"    Rejected (False Positives):        {result.summary.rejected_count}",
+        f"    Unverifiable (Execution Failures): {result.summary.unverifiable_count}",
+    ]
+    if result.findings:
+        lines.extend(["-" * 80, "  Verified Findings & Analysis Details:"])
+        for idx, finding in enumerate(result.findings, start=1):
+            status_badge = f"[{finding.status.value.upper()}]"
+            conf = finding.confidence
+            conf_str = f"{conf.level.value.upper()} (score: {conf.score:.2f})"
+            lines.append(
+                f"    {idx}. Parameter '{finding.parameter_name}' {status_badge} "
+                f"({finding.vulnerability_class.value.upper()} via {finding.parameter_location.value})"
+            )
+            lines.append(f"       Confidence: {conf_str}")
+            lines.append(f"       Rationale:  {finding.verification_rationale}")
+            if finding.rejection_or_downgrade_reason:
+                lines.append(f"       Down/Reject Reason: {finding.rejection_or_downgrade_reason}")
+            if finding.recommended_next_step:
+                lines.append(f"       Next Step:  {finding.recommended_next_step}")
+            if finding.corroborating_evidence:
+                first_ev = finding.corroborating_evidence[0]
+                lines.append(
+                    f"       Evidence:   {first_ev.evidence_type.value} [Rule: {first_ev.rule_id}] "
+                    f"(Provider: {first_ev.provider_or_family})"
+                )
+                if first_ev.safe_snippet:
+                    lines.append(f'       Snippet:    "{first_ev.safe_snippet[:100]}"')
+            if finding.state_history:
+                transitions = " -> ".join(
+                    [h.from_status.value for h in finding.state_history]
+                    + [finding.state_history[-1].to_status.value]
+                )
+                lines.append(f"       Lifecycle:  {transitions}")
+    if result.limitations:
+        lines.extend(["-" * 80, "  Verification Safety Boundaries & Limitations:"])
+        for lim in result.limitations:
+            lines.append(f"    * {lim}")
+    lines.append("=" * 80)
+    return "\n".join(lines)
+
+
+@app.command(name="verify")
+def verify_cmd(
+    input_file: str | None = typer.Option(
+        None,
+        "--input",
+        "-i",
+        help="Path to JSON file containing previous scan findings or execution results to verify.",
+    ),
+    fixture: str | None = typer.Option(
+        None,
+        "--fixture",
+        help="Path to JSON file containing captured baseline and test responses for offline testing.",
+    ),
+    url: str | None = typer.Option(
+        None,
+        "--url",
+        "-u",
+        help="Target web application URL to assess and verify.",
+    ),
+    engine: str = typer.Option(
+        "all",
+        "--engine",
+        "-e",
+        help="Target detection engine to orchestrate ('sqli', 'nosqli', or 'all').",
+    ),
+    param: str | None = typer.Option(
+        None,
+        "--param",
+        "-p",
+        help="Specific candidate parameter to test and verify (defaults to all eligible parameters).",
+    ),
+    method: str = typer.Option(
+        "GET",
+        "--method",
+        "-m",
+        help="HTTP request method (GET, POST, PUT, PATCH, DELETE).",
+    ),
+    data: str | None = typer.Option(
+        None,
+        "--data",
+        "-d",
+        help="Raw or URL-encoded form data body.",
+    ),
+    json_data: str | None = typer.Option(
+        None,
+        "--json",
+        "-j",
+        help="JSON formatted request body.",
+    ),
+    auth_type: str = typer.Option(
+        "none",
+        "--auth-type",
+        help="Authentication method: none, bearer, basic, header, cookie.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        help="Bearer token (or DBSHIELD_AUTH_TOKEN env var).",
+    ),
+    username: str | None = typer.Option(
+        None,
+        "--username",
+        help="HTTP Basic username (or DBSHIELD_AUTH_USERNAME env var).",
+    ),
+    password: str | None = typer.Option(
+        None,
+        "--password",
+        help="HTTP Basic password (or DBSHIELD_AUTH_PASSWORD env var).",
+    ),
+    cookie: str | None = typer.Option(
+        None,
+        "--cookie",
+        help="Session cookie in 'name=value' format.",
+    ),
+    max_budget: int = typer.Option(
+        50,
+        "--max-budget",
+        help="Maximum total HTTP requests allowed for the execution run.",
+    ),
+    max_param_budget: int = typer.Option(
+        15,
+        "--max-param-budget",
+        help="Maximum HTTP requests allowed per individual parameter.",
+    ),
+    timeout: float | None = typer.Option(
+        None,
+        "--timeout",
+        help="HTTP request timeout in seconds.",
+    ),
+    fmt: str = typer.Option(
+        "text",
+        "--format",
+        "-f",
+        help="Output format: text or json.",
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Optional file path to export verification results.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Overwrite destination output file if it already exists.",
+    ),
+) -> None:
+    """Analyze security test findings, reduce false positives, and produce verified results."""
+    fmt_clean = fmt.lower().strip()
+    if fmt_clean not in {"text", "json"}:
+        print_error(
+            f"Invalid format '{fmt}'.",
+            cause="The --format option must be either 'text' or 'json'.",
+            remedy="Specify '--format text' or '--format json'.",
+        )
+        raise typer.Exit(code=2)
+
+    engine_clean = engine.lower().strip()
+    if engine_clean not in {"sqli", "nosqli", "all"}:
+        print_error(
+            f"Invalid engine '{engine}'.",
+            cause="Supported engines are 'sqli', 'nosqli', or 'all'.",
+            remedy="Specify '--engine sqli', '--engine nosqli', or '--engine all'.",
+        )
+        raise typer.Exit(code=2)
+
+    v_engine = VerificationEngine()
+
+    # 1. Input file mode (existing findings or execution run results)
+    if input_file:
+        in_path = Path(input_file)
+        if not in_path.is_file():
+            print_error(
+                f"Input file '{input_file}' not found.",
+                cause="The specified input path does not exist or is not a readable file.",
+                remedy="Provide a valid path to an existing JSON results file.",
+            )
+            raise typer.Exit(code=2)
+        try:
+            raw_content = json.loads(in_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print_error(
+                f"Failed to parse input file '{input_file}'.",
+                cause=str(exc),
+                remedy="Ensure the file contains valid JSON formatted data.",
+            )
+            raise typer.Exit(code=1) from exc
+
+        print_info(f"Analyzing and verifying security findings from '{in_path}'...")
+        if isinstance(raw_content, dict):
+            if "records" in raw_content and "target_url" in raw_content:
+                try:
+                    run_res = ExecutionRunResult.model_validate(raw_content)
+                    result = v_engine.verify_execution_run(run_res)
+                except Exception:
+                    result = v_engine.verify_dict_records(
+                        [raw_content],
+                        target_url=raw_content.get("target_url", "http://laboratory.local"),
+                    )
+            elif "findings" in raw_content:
+                t_url = raw_content.get("target_url", "http://laboratory.local")
+                findings_data = raw_content["findings"]
+                result = v_engine.verify_dict_records(findings_data, target_url=t_url)
+            else:
+                result = v_engine.verify_dict_records([raw_content])
+        elif isinstance(raw_content, list):
+            result = v_engine.verify_dict_records(raw_content)
+        else:
+            print_error(
+                "Unsupported JSON root structure in input file.",
+                cause="Input JSON root must be an object or an array of finding objects.",
+                remedy="Provide standard DBShield scan or execution results.",
+            )
+            raise typer.Exit(code=2)
+
+    # 2. Offline fixture mode
+    elif fixture:
+        fix_path = Path(fixture)
+        if not fix_path.is_file():
+            print_error(
+                f"Fixture file '{fixture}' not found.",
+                cause="The specified fixture path does not exist or is not a readable file.",
+                remedy="Provide a valid path to a JSON response fixture file.",
+            )
+            raise typer.Exit(code=2)
+
+        try:
+            fix_content = json.loads(fix_path.read_text(encoding="utf-8"))
+            t_url = fix_content.get("target_url", "http://laboratory.local/fixture")
+            p_name = fix_content.get("parameter", param or "id")
+            p_loc_str = fix_content.get("location", "query")
+            p_loc = ParameterLocation(p_loc_str)
+            p_id = fix_content.get("payload_id", "SQLI_ERR_QUOTE")
+
+            base_info = fix_content.get("baseline", {})
+            test_info = fix_content.get("test", {})
+            base_resp = HTTPResponse(
+                url=t_url,
+                status_code=base_info.get("status_code", 200),
+                body=base_info.get("body", ""),
+            )
+            test_resp = HTTPResponse(
+                url=t_url,
+                status_code=test_info.get("status_code", 200),
+                body=test_info.get("body", ""),
+            )
+
+            true_resp = None
+            false_resp = None
+            if "true_response" in fix_content and "false_response" in fix_content:
+                true_info = fix_content["true_response"]
+                false_info = fix_content["false_response"]
+                true_resp = HTTPResponse(
+                    url=t_url,
+                    status_code=true_info.get("status_code", 200),
+                    body=true_info.get("body", ""),
+                )
+                false_resp = HTTPResponse(
+                    url=t_url,
+                    status_code=false_info.get("status_code", 200),
+                    body=false_info.get("body", ""),
+                )
+
+            adapter = (
+                NoSQLiExecutionAdapter() if engine_clean == "nosqli" else SQLiExecutionAdapter()
+            )
+            print_info(
+                f"Analyzing offline fixture from '{fix_path}' via {adapter.engine_name.upper()}..."
+            )
+            exec_res = TestExecutionOrchestrator.execute_offline_fixture(
+                target_url=t_url,
+                param_name=p_name,
+                param_location=p_loc,
+                payload_id=p_id,
+                baseline_response=base_resp,
+                test_response=test_resp,
+                adapter=adapter,
+                true_response=true_resp,
+                false_response=false_resp,
+            )
+            result = v_engine.verify_execution_run(exec_res)
+        except Exception as exc:
+            print_error(
+                "Failed to process offline fixture.",
+                cause=str(exc),
+                remedy="Ensure fixture file is valid JSON matching DBShield fixture specifications.",
+            )
+            raise typer.Exit(code=1) from exc
+
+    # 3. Live online target execution and verification
+    elif url:
+        try:
+            target = Target.from_url(url)
+        except URLValidationError as exc:
+            print_error(exc.message, cause=exc.cause, remedy=exc.remedy)
+            raise typer.Exit(code=2) from exc
+
+        settings = get_settings()
+        scope_manager = ScopeManager(
+            allowed_hosts=settings.allowed_hosts,
+            allow_subdomains=settings.allow_subdomains,
+            strict_mode=bool(settings.allowed_hosts),
+        )
+        try:
+            scope_manager.assert_in_scope(target)
+        except ScopeViolationError as exc:
+            print_error(
+                f"Target host '{target.host}' is not within authorized scope.",
+                cause=exc.cause or "Host does not match any entry in allowed_hosts.",
+                remedy=exc.remedy
+                or "Configure DBSHIELD_ALLOWED_HOSTS to authorize target before scanning.",
+            )
+            raise typer.Exit(code=2) from exc
+
+        effective_token = token or os.environ.get("DBSHIELD_AUTH_TOKEN")
+        effective_username = username or os.environ.get("DBSHIELD_AUTH_USERNAME")
+        effective_password = password or os.environ.get("DBSHIELD_AUTH_PASSWORD")
+
+        try:
+            auth_mode = AuthType(auth_type.lower().strip())
+        except ValueError:
+            print_error(
+                f"Invalid auth-type '{auth_type}'.",
+                cause=f"'{auth_type}' is not a recognized authentication method.",
+                remedy="Supported methods: none, bearer, basic, header, cookie.",
+            )
+            raise typer.Exit(code=2) from None
+
+        try:
+            auth_config = AuthConfig(
+                auth_type=auth_mode,
+                token=effective_token,
+                username=effective_username,
+                password=effective_password,
+                cookies={"session": cookie} if cookie else {},
+            )
+        except ValueError as exc:
+            print_error(
+                "Invalid authentication configuration parameters.",
+                cause=str(exc),
+                remedy="Check required credentials for the chosen auth mode.",
+            )
+            raise typer.Exit(code=2) from exc
+
+        session_mgr = SessionManager(auth_config=auth_config)
+        session_mgr.bind_target(target)
+
+        effective_timeout = timeout if timeout is not None else settings.http_timeout
+        http_client = SafeHTTPClient(
+            scope_manager=scope_manager,
+            timeout=effective_timeout,
+            session_manager=session_mgr,
+        )
+
+        policy = ExecutionPolicy(
+            max_total_requests=max_budget,
+            max_requests_per_parameter=max_param_budget,
+            timeout_seconds=effective_timeout,
+        )
+
+        adapters: list[EngineAdapter] = []
+        if engine_clean in {"sqli", "all"}:
+            adapters.append(SQLiExecutionAdapter())
+        if engine_clean in {"nosqli", "all"}:
+            adapters.append(NoSQLiExecutionAdapter())
+
+        orchestrator = TestExecutionOrchestrator(
+            scope_manager=scope_manager,
+            http_client=http_client,
+            session_manager=session_mgr,
+            policy=policy,
+        )
+
+        print_info(f"Initiating orchestrated execution test run on: {target.full_url}")
+        results: list[ExecutionRunResult] = []
+        for adp in adapters:
+            try:
+                res = orchestrator.execute_suite(
+                    target_url=target,
+                    adapter=adp,
+                    selected_param=param,
+                    method=method,
+                    data=data,
+                    json_data=json_data,
+                )
+                results.append(res)
+            except Exception as exc:
+                print_error(
+                    f"Operational failure during {adp.engine_name.upper()} execution run.",
+                    cause=str(exc),
+                    remedy="Review target connectivity and configuration.",
+                )
+                raise typer.Exit(code=1) from exc
+
+        exec_res = results[0]
+        if len(results) > 1:
+            all_records = []
+            all_findings = []
+            total_reqs = sum(r.summary.total_requests for r in results)
+            total_cases = sum(r.summary.total_test_cases for r in results)
+            exec_cases = sum(r.summary.executed_test_cases for r in results)
+            skip_cases = sum(r.summary.skipped_test_cases for r in results)
+            fail_cases = sum(r.summary.failed_test_cases for r in results)
+            duration = sum(r.summary.duration_seconds for r in results)
+            for r in results:
+                all_records.extend(r.records)
+                all_findings.extend(r.findings)
+            from dbshield.execution.models import ExecutionSummary
+
+            merged_summary = ExecutionSummary(
+                total_test_cases=total_cases,
+                executed_test_cases=exec_cases,
+                skipped_test_cases=skip_cases,
+                failed_test_cases=fail_cases,
+                total_requests=total_reqs,
+                duration_seconds=round(duration, 3),
+            )
+            exec_res = ExecutionRunResult(
+                target_url=target.full_url,
+                engine_name="sqli+nosqli",
+                execution_status="completed",
+                summary=merged_summary,
+                records=all_records,
+                findings=all_findings,
+            )
+
+        print_info("Analyzing execution results through verification engine...")
+        result = v_engine.verify_execution_run(exec_res)
+
+    else:
+        print_error(
+            "Missing target or input specification.",
+            cause="Neither --input, --fixture, nor --url was provided.",
+            remedy="Provide an input file via '--input <PATH>', an offline fixture via '--fixture <PATH>', or a target via '--url <URL>'.",
+        )
+        raise typer.Exit(code=2)
+
+    rendered_text = _format_verification_report(result)
+    json_output = result.model_dump_json(indent=2)
+
+    if output is not None:
+        out_path = Path(output)
+        if out_path.exists() and not overwrite:
+            print_error(
+                f"Output destination '{output}' already exists.",
+                cause="Target file exists and --overwrite was not specified.",
+                remedy="Provide a different output path or specify --overwrite to replace it.",
+            )
+            raise typer.Exit(code=1)
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                json_output if fmt_clean == "json" else rendered_text, encoding="utf-8"
+            )
+            print_success(f"Verification results successfully exported to '{out_path}'.")
         except Exception as exc:
             print_error(
                 f"Failed to write results to '{out_path}'.",
