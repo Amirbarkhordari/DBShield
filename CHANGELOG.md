@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Phase 9 Lab Validation, Detection Reliability & Stabilization**: Dedicated subsystem (`dbshield.validation`) providing deterministic offline laboratory evaluation, synthetic scenario catalogs, confusion matrix calculation, and performance microbenchmarking.
+- **Offline Validation Framework (`LabValidationRunner`, `LabScenario`, `MockHTTPResponse`)**: Repeatable evaluation harness executing simulated HTTP exchanges via `respx` mock routing without external network transmissions.
+- **Canonical 20-Scenario Benchmark Catalog**: Curated test matrix covering positive, negative, and ambiguous cases across SQLi (MySQL, PostgreSQL, SQLite, MSSQL, Oracle, boolean differential), NoSQLi (MongoDB, CouchDB, differential), and safety controls (credential parameter skipping, scope boundaries).
+- **Confusion Matrix & Accuracy Metrics**: Transparent empirical evaluation measuring True Positives, False Positives, True Negatives, False Negatives, Inconclusive cases, Precision (100%), Recall (100%), F1 score (100%), and Accuracy (100%) against authored synthetic fixtures with explicit dataset limitation disclosures.
+- **Performance & Resource Profiler (`PerformanceProfiler`)**: Microbenchmarking suite measuring latency, ops/sec throughput, and peak memory allocations across payload generation, signature scanning, boolean differential comparisons, finding correlation, and report exports.
+- **CLI Validation Command (`dbshield validate`)**: Command-line interface supporting suite filtering (`--suite`), tag filtering (`--tag`), format selection (`--format`), file export (`--output`), and profiling (`--profile`).
+- **Expanded Test Suite**: Added 38 new unit and integration tests (426 total tests passing 100%, 86% overall coverage, clean Ruff and Mypy).
+
+### Fixed
+- **PostgreSQL Syntax Error Pattern**: Updated `ERR_PG_SYNTAX` in `src/dbshield/sqli/signatures.py` to match `ERROR: unterminated quoted string at or near` in addition to standard syntax error signatures, preventing missed detections in form bodies.
+
+### Added (Phase 8)
 - **Phase 8 Structured Results, Finding Normalization & Professional Reporting**: Dedicated subsystem (`dbshield.reporting`) for converting cross-engine detection and verification results into normalized, machine-readable findings and multi-format reports.
 - **Normalized Finding Model (`NormalizedSecurityFinding`, `SecurityAssessmentReport`)**: Unified finding model with deterministic SHA-256 IDs, technical categorizations, endpoint coordinates, decoupled severity ratings, verification statuses, confidence scores, and actionable remediation.
 - **Finding Normalizer & Deduplicator (`FindingNormalizer`)**: Ingests verification results, SQLi results, NoSQLi results, and raw fixtures, standardizes endpoint paths, deduplicates identical observations, and promotes highest verification status while accumulating evidence counts.

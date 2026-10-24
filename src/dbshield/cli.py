@@ -61,6 +61,12 @@ from dbshield.reporting import (
 from dbshield.scope.manager import ScopeManager
 from dbshield.sqli.engine import SQLiEngine
 from dbshield.sqli.models import ParameterLocation, SQLiScanResult
+from dbshield.validation import (
+    LabValidationRunner,
+    PerformanceProfiler,
+    ScenarioCategory,
+    ValidationReport,
+)
 from dbshield.verification import (
     VerificationEngine,
     VerificationResult,
@@ -3028,6 +3034,227 @@ def report_cmd(
 
     sys.stdout.write(rendered + ("\n" if not rendered.endswith("\n") else ""))
     sys.stdout.flush()
+    raise typer.Exit(code=0)
+
+
+def _format_validation_terminal(
+    report: ValidationReport,
+    prof_report: Any | None = None,
+) -> str:
+    """Format validation execution report for terminal display."""
+    lines: list[str] = [
+        "================================================================================",
+        "DBSHIELD DETECTION RELIABILITY & LAB VALIDATION REPORT (PHASE 9)",
+        "================================================================================",
+        f"Execution Timestamp: {report.timestamp.isoformat()}",
+        f"Total Scenarios:     {report.total_scenarios}",
+        f"Passed:              {report.passed}",
+        f"Failed:              {report.failed}",
+        f"Inconclusive:        {report.inconclusive}",
+        f"Skipped / Blocked:   {report.skipped}",
+        "--------------------------------------------------------------------------------",
+        "SCENARIO VERDICTS:",
+    ]
+
+    for r in report.results:
+        verdict = r.outcome.value.upper()
+        disc = f" ({len(r.discrepancies)} discrepancies)" if r.discrepancies else ""
+        lines.append(f"  [{verdict:12}] {r.scenario_id:<26} {r.scenario_name}{disc}")
+        if r.discrepancies:
+            for d in r.discrepancies:
+                lines.append(f"               * {d}")
+
+    cm = report.confusion_matrix
+    lines.extend(
+        [
+            "--------------------------------------------------------------------------------",
+            "CONFUSION MATRIX & ACCURACY METRICS:",
+            f"  True Positives (TP):     {cm.true_positives}",
+            f"  False Positives (FP):    {cm.false_positives}",
+            f"  True Negatives (TN):     {cm.true_negatives}",
+            f"  False Negatives (FN):    {cm.false_negatives}",
+            f"  Inconclusive Cases:      {cm.inconclusive}",
+            f"  Skipped / Guarded:       {cm.skipped}",
+            f"  Precision:               {f'{cm.precision:.4f}' if cm.precision is not None else 'N/A'}",
+            f"  Recall:                  {f'{cm.recall:.4f}' if cm.recall is not None else 'N/A'}",
+            f"  F1 Score:                {f'{cm.f1_score:.4f}' if cm.f1_score is not None else 'N/A'}",
+            f"  Accuracy:                {f'{cm.accuracy:.4f}' if cm.accuracy is not None else 'N/A'}",
+            "--------------------------------------------------------------------------------",
+            "DATASET LIMITATIONS & METHODOLOGICAL NOTES:",
+        ]
+    )
+    for lim in report.dataset_limitations:
+        lines.append(f"  * {lim}")
+
+    if prof_report is not None:
+        lines.extend(
+            [
+                "--------------------------------------------------------------------------------",
+                "PERFORMANCE & RESOURCE PROFILING BENCHMARKS:",
+                f"  Total Benchmark Duration: {prof_report.total_duration_ms:.2f} ms",
+                f"  Environment: Python {prof_report.environment.get('python_version')} ({prof_report.environment.get('platform')})",
+                "",
+                f"  {'Workload Name':<44} {'Avg (ms)':>10} {'Throughput':>14} {'Peak Mem':>12}",
+                f"  {'-' * 44} {'-' * 10} {'-' * 14} {'-' * 12}",
+            ]
+        )
+        for b in prof_report.benchmarks:
+            lines.append(
+                f"  {b.name:<44} {b.avg_time_ms:>10.3f} {f'{b.ops_per_sec:.1f} ops/s':>14} {f'{b.memory_peak_mb:.3f} MB':>12}"
+            )
+
+    lines.append("================================================================================")
+    return "\n".join(lines)
+
+
+@app.command(name="validate")
+def validate_cmd(
+    suite: str = typer.Option(
+        "all",
+        "--suite",
+        "-s",
+        help="Validation suite category to execute: all, sqli, nosqli, safety.",
+    ),
+    tag: str | None = typer.Option(
+        None,
+        "--tag",
+        "-t",
+        help="Filter validation scenarios by tag (e.g., error, differential, mongo, clean).",
+    ),
+    format_opt: str = typer.Option(
+        "terminal",
+        "--format",
+        "-f",
+        help="Output report format: terminal, json.",
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Optional destination file path for validation report.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Overwrite destination file if it already exists.",
+    ),
+    profile: bool = typer.Option(
+        False,
+        "--profile",
+        "-p",
+        help="Execute performance microbenchmarks and resource profiling.",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress informational notices and diagnostic progress messages.",
+    ),
+) -> None:
+    """Execute deterministic offline validation scenarios and reliability benchmarks (Phase 9)."""
+    suite_clean = suite.lower().strip()
+    valid_suites = {"all", "sqli", "nosqli", "safety"}
+    if suite_clean not in valid_suites:
+        print_error(
+            f"Invalid validation suite '{suite}'.",
+            cause=f"'{suite}' is not a recognized validation suite.",
+            remedy="Supported suites: all, sqli, nosqli, safety.",
+        )
+        raise typer.Exit(code=2)
+
+    fmt_clean = format_opt.lower().strip()
+    if fmt_clean not in {"terminal", "table", "json"}:
+        print_error(
+            f"Invalid format '{format_opt}'.",
+            cause=f"'{format_opt}' is not a supported output format.",
+            remedy="Supported formats: terminal, json.",
+        )
+        raise typer.Exit(code=2)
+
+    # Check output file existence before running
+    if output is not None:
+        out_path = Path(output)
+        if out_path.exists() and not overwrite:
+            print_error(
+                f"Output destination '{output}' already exists.",
+                cause="Target file exists and --overwrite was not specified.",
+                remedy="Provide a different output path or specify --overwrite to replace it.",
+            )
+            raise typer.Exit(code=1)
+
+    category_filter: ScenarioCategory | None = None
+    if suite_clean == "sqli":
+        category_filter = ScenarioCategory.SQL_INJECTION
+    elif suite_clean == "nosqli":
+        category_filter = ScenarioCategory.NOSQL_INJECTION
+    elif suite_clean == "safety":
+        category_filter = ScenarioCategory.SAFETY_BUDGET
+
+    if not quiet:
+        print_info(f"Executing Phase 9 validation suite '{suite_clean}' (tag: {tag or 'any'})...")
+
+    runner = LabValidationRunner()
+    report = runner.run_suite(
+        category_filter=category_filter,
+        tag_filter=tag,
+    )
+
+    prof_report: Any | None = None
+    if profile:
+        if not quiet:
+            print_info("Executing performance microbenchmarks and resource profiling...")
+        profiler = PerformanceProfiler()
+        prof_report = profiler.run_all(
+            payload_iters=25,
+            sig_iters=25,
+            diff_iters=15,
+            corr_iters=25,
+            report_iters=10,
+        )
+
+    if fmt_clean == "json":
+        json_payload: dict[str, Any] = {
+            "schema_version": "1.0.0",
+            "validation_report": report.model_dump(mode="json"),
+        }
+        if prof_report is not None:
+            json_payload["profiler_report"] = prof_report.model_dump(mode="json")
+        rendered = json.dumps(json_payload, indent=2)
+    else:
+        rendered = _format_validation_terminal(report, prof_report)
+
+    # Output file export
+    if output is not None:
+        out_path = Path(output)
+        try:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(rendered, encoding="utf-8")
+            if not quiet:
+                print_success(f"Validation report successfully written to '{out_path}'.")
+        except Exception as exc:
+            print_error(
+                f"Failed to write validation report to '{out_path}'.",
+                cause=str(exc),
+                remedy="Verify write permissions for destination path.",
+            )
+            raise typer.Exit(code=1) from exc
+
+    sys.stdout.write(rendered + ("\n" if not rendered.endswith("\n") else ""))
+    sys.stdout.flush()
+
+    if report.failed > 0:
+        if not quiet:
+            print_error(
+                f"Validation suite failed with {report.failed} discrepancies.",
+                cause="One or more deterministic validation scenarios diverged from expected outcomes.",
+                remedy="Review scenario discrepancies and address detection regressions.",
+            )
+        raise typer.Exit(code=1)
+
+    if not quiet:
+        print_success(
+            f"Validation suite '{suite_clean}' completed successfully: {report.passed} scenarios passed."
+        )
     raise typer.Exit(code=0)
 
 

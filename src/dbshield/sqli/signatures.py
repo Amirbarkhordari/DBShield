@@ -79,8 +79,11 @@ class SignatureCatalog:
         DBErrorSignature(
             rule_id="ERR_PG_SYNTAX",
             family=DatabaseFamily.POSTGRESQL,
-            pattern=re.compile(r"ERROR:\s+syntax error at or near\s+", re.IGNORECASE),
-            description="PostgreSQL syntax error message.",
+            pattern=re.compile(
+                r"ERROR:\s+(?:syntax error|unterminated quoted string) at or near\s+",
+                re.IGNORECASE,
+            ),
+            description="PostgreSQL syntax error or unterminated quoted string message.",
         ),
         DBErrorSignature(
             rule_id="ERR_PG_QUERY_FAILED",

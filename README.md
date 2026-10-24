@@ -6,7 +6,7 @@
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
-[![Tests: Pytest](https://img.shields.io/badge/tests-381%20passed-brightgreen.svg)](#)
+[![Tests: Pytest](https://img.shields.io/badge/tests-426%20passed-brightgreen.svg)](#)
 
 ---
 
@@ -17,7 +17,7 @@
 
 ## Project Status
 
-- **Current Phase**: **Phase 8 — Structured Results, Finding Normalization & Professional Reporting** (Completed & Verified)
+- **Current Phase**: **Phase 9 — Laboratory Validation, Detection Reliability & Stabilization** (Completed & Verified)
 - **Roadmap**: 10 Phases leading to advanced database vulnerability detection and Burp Suite integration. See [docs/roadmap.md](docs/roadmap.md).
 
 ### Implemented Functionality
@@ -139,8 +139,25 @@
 - **Dedicated CLI Command (`dbshield report`)**:
   - Multi-format report generation supporting input file ingestion (`--input`), format selection (`--format`), minimum severity filtering (`--severity`), status filtering (`--status`), output file writing (`--output`), and overwrite protection (`--overwrite`).
 
-### Out of Scope in Phase 8 (Planned for Future Phases)
-Database extraction, table/collection dumping, data modification, automated exploitation, credential brute-forcing, whole-app crawling, lab testbed benchmarks (Phase 9), and Burp Suite extension bindings (Phase 10).
+#### Phase 9: Laboratory Validation, Detection Reliability & Stabilization
+- **Deterministic Offline Validation Framework (`LabValidationRunner`)**:
+  - Offline evaluation engine executing simulated HTTP requests via `respx` mock routing without external network transmissions.
+  - Dynamic pattern matching prioritizing probe patterns and payloads before baseline fallback routes.
+- **Canonical 20-Scenario Benchmark Catalog (`load_standard_scenarios`)**:
+  - 13 SQL injection scenarios (MySQL, PostgreSQL, SQLite, MSSQL, Oracle error-based and boolean differential).
+  - 6 NoSQL injection scenarios (MongoDB, CouchDB error-based and operator differential).
+  - Safety guardrail scenarios (credential parameter skipping, scope boundary enforcement).
+  - Explicit coverage of known-positive, known-negative, and ambiguous edge cases.
+- **Confusion Matrix & Accuracy Evaluation (`ConfusionMatrix`)**:
+  - Transparent statistical tracking of True Positives, False Positives, True Negatives, False Negatives, Inconclusive, and Skipped outcomes.
+  - Precision, Recall, F1 score, and Accuracy calculations with documented dataset limitations.
+- **Performance & Resource Profiler (`PerformanceProfiler`)**:
+  - Microbenchmarking suite measuring latency, ops/sec throughput, and peak memory allocations across payload generation, signature scanning, boolean differential comparisons, finding correlation, and report exports.
+- **Dedicated CLI Command (`dbshield validate`)**:
+  - Offline scenario execution with suite filtering (`--suite`), tag filtering (`--tag`), format selection (`--format terminal|json`), file export (`--output`), and profiling (`--profile`).
+
+### Out of Scope in Phase 9 (Planned for Future Phases)
+Database extraction, table/collection dumping, data modification, automated exploitation, credential brute-forcing, whole-app crawling, upstream proxy configuration, and Burp Suite extension bindings (Phase 10).
 
 ---
 
@@ -517,6 +534,43 @@ dbshield report \
 - `--severity`, `-s`: Minimum severity filter (`info`, `low`, `medium`, `high`, `critical`).
 - `--status`: Filter by verification status (e.g. `verified`, `potential_indicator`, `inconclusive`).
 
+### 9. Laboratory Validation & Performance Profiling (`dbshield validate`)
+
+Execute deterministic offline laboratory validation scenarios and microbenchmarks:
+
+#### Run Full Validation Suite
+```bash
+dbshield validate --suite all
+```
+
+#### Run Specific Suite with Tag Filtering
+```bash
+dbshield validate --suite sqli --tag error
+```
+
+#### Export Validation Results to JSON
+```bash
+dbshield validate \
+  --suite all \
+  --format json \
+  --output ./validation_report.json \
+  --overwrite
+```
+
+#### Run Validation Suite with Performance Microbenchmarks
+```bash
+dbshield validate --profile
+```
+
+#### Validate Command Options
+- `--suite`, `-s`: Validation suite category: `all`, `sqli`, `nosqli`, `safety` (default: `all`).
+- `--tag`, `-t`: Filter validation scenarios by tag (e.g., `error`, `differential`, `mongo`).
+- `--format`, `-f`: Output report format: `terminal`, `json` (default: `terminal`).
+- `--output`, `-o`: Optional destination file path for validation report.
+- `--overwrite`: Overwrite destination file if it already exists.
+- `--profile`, `-p`: Execute performance microbenchmarks and resource profiling.
+- `--quiet`, `-q`: Suppress informational notices and diagnostic progress messages.
+
 ---
 
 ## Configuration
@@ -539,7 +593,7 @@ Configuration is managed via environment variables or a local `.env` file (see `
 
 ## Development and Testing
 
-Execute the test suite (381 unit and integration tests):
+Execute the test suite (426 unit and integration tests):
 ```bash
 pytest
 ```
@@ -581,7 +635,8 @@ dbshield/
 │       ├── phase-05.md       # Phase 5: NoSQL Injection Detection Engine
 │       ├── phase-06.md       # Phase 6: Payload Catalog & Test Execution Engine
 │       ├── phase-07.md       # Phase 7: Evidence Analysis & Vulnerability Verification
-│       └── phase-08.md       # Phase 8: Structured Results, Finding Normalization & Professional Reporting
+│       ├── phase-08.md       # Phase 8: Structured Results, Finding Normalization & Professional Reporting
+│       └── phase-09.md       # Phase 9: Lab Validation, Detection Reliability & Stabilization
 ├── src/
 │   └── dbshield/
 │       ├── __init__.py       # Package metadata
@@ -600,10 +655,11 @@ dbshield/
 │       ├── payloads/         # Centralized Payload Catalog & Models
 │       ├── execution/        # Orchestrator, Transformers, Policies & Adapters
 │       ├── verification/     # Evidence Normalizer, Correlator, Confidence & Verification Engine
-│       └── reporting/        # Finding Models, Severity Assessor, Exporters (JSON, CSV, MD, Terminal)
+│       ├── reporting/        # Finding Models, Severity Assessor, Exporters (JSON, CSV, MD, Terminal)
+│       └── validation/       # Offline Lab Runner, Benchmark Scenarios, Profiler & Metrics
 └── tests/
-    ├── unit/                 # Unit tests (config, models, scope, logging, cli, parser, classifier, sqli, nosqli, payloads, execution, verification, reporting)
-    ├── integration/          # Integration tests (HTTP client, discovery, auth, sqli, nosqli, execution orchestrator, cli, verify, report)
+    ├── unit/                 # Unit tests (config, models, scope, logging, cli, parser, classifier, sqli, nosqli, payloads, execution, verification, reporting, validation)
+    ├── integration/          # Integration tests (HTTP client, discovery, auth, sqli, nosqli, execution orchestrator, cli, verify, report, validate)
     └── fixtures/             # Offline laboratory test fixtures
 ```
 

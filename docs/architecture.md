@@ -587,7 +587,68 @@ The Phase 4 SQL Injection Detection Engine provides modular, defensive, and expl
 
 ---
 
-## 11. Extension Points for Future Phases
+## 11. Laboratory Validation, Detection Reliability & Stabilization Subsystem (`dbshield.validation`)
+
+### 11.1 Architecture and Validation Flow
+
+```
++---------------------------------------------------------------------------------+
+|                       Scenario Catalog (dbshield.validation)                   |
+|          (20 Curated Canonical Benchmarks: SQLi, NoSQLi, Safety Guardrails)     |
++----------------------------------------+----------------------------------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         |      LabValidationRunner      |
+                         |   (respx Mock HTTP Router)    |
+                         +---------------+---------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         |   Cross-Engine Execution      |
+                         |  (SQLiEngine / NoSQLiEngine)  |
+                         +---------------+---------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         |      VerificationEngine       |
+                         |  (Correlation & State Machine)|
+                         +---------------+---------------+
+                                         |
+                                         v
+                         +-------------------------------+
+                         |    Evaluation & Metrics       |
+                         | (Confusion Matrix / Accuracy) |
+                         +---------------+---------------+
+                                         |
+                                         v
+                  +----------------------+----------------------+
+                  |                                             |
+                  v                                             v
+       +---------------------+                       +---------------------+
+       | Terminal Validation |                       |  JSON Report Export |
+       | (Human-Readable CLI)|                       | (Machine-Readable)  |
+       +---------------------+                       +---------------------+
+```
+
+### 11.2 Key Abstractions
+
+1. **`LabScenario` & `MockHTTPResponse` (`dbshield.validation.models`)**:
+   - Reusable benchmark test case defining target coordinates, candidate parameters, synthetic responses, and expected detection/verification outcomes.
+   - Dynamic URL and request body matching prioritizing probe patterns before baseline prefixes.
+
+2. **`LabValidationRunner` (`dbshield.validation.runner`)**:
+   - Executes offline validation suites using `respx` mock routing without any outbound network calls.
+   - Evaluates engine outputs against expected classifications, status transitions, and database family tags.
+   - Computes statistical confusion matrices (TP, FP, TN, FN, Inconclusive, Skipped) and transparent precision, recall, and F1 metrics.
+   - Enforces explicit dataset limitation notices warning against real-world over-generalization.
+
+3. **`PerformanceProfiler` (`dbshield.validation.profiler`)**:
+   - Microbenchmarking framework evaluating latency, throughput (ops/sec), and peak memory allocation across payload filtering, regex signature scanning, boolean differential comparisons, finding correlation, and report exports.
+
+---
+
+## 12. Extension Points for Future Phases
 
 | Phase | Module | Integration Point & Planned Responsibility | Status |
 | :--- | :--- | :--- | :--- |
@@ -599,5 +660,5 @@ The Phase 4 SQL Injection Detection Engine provides modular, defensive, and expl
 | **Phase 6: Payload Execution**| `dbshield.payloads` / `dbshield.execution` | Reusable payload catalog, isolated transformer, budget policies, engine orchestrator. | **Completed** |
 | **Phase 7: Evidence Analysis**| `dbshield.verification` | Normalized evidence, correlation, explainable confidence, verification state machine, false-positive reduction. | **Completed** |
 | **Phase 8: Reporting** | `dbshield.reporting` | Normalized findings, severity decoupling, CSV injection protection, multi-format reports (JSON, CSV, MD, Terminal), `dbshield report` CLI. | **Completed** |
-| **Phase 9: Lab Validation** | `tests.lab` | Automated test suite execution against isolated test targets. | Planned |
+| **Phase 9: Lab Validation** | `dbshield.validation` | Deterministic offline validation suite, confusion matrix, performance profiler, `dbshield validate` CLI. | **Completed** |
 | **Phase 10: Burp Suite** | `dbshield.integrations` | Upstream proxy adapters and Burp Suite extension bindings. | Planned |

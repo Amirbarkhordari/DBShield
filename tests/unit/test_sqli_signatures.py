@@ -125,3 +125,14 @@ def test_truncated_mysql_manual_signature_fallback() -> None:
     matches = SignatureCatalog.match_signatures(text)
     assert len(matches) == 1
     assert matches[0][0].rule_id == "ERR_MYSQL_MANUAL"
+
+
+def test_postgresql_unterminated_quote_matching() -> None:
+    # Regression test for Phase 9: PostgreSQL unterminated quoted string syntax error
+    text = "Database query failed: ERROR: unterminated quoted string at or near ''' at character 18"
+    matches = SignatureCatalog.match_signatures(text)
+    assert len(matches) >= 1
+    sig, snippet = matches[0]
+    assert sig.rule_id == "ERR_PG_SYNTAX"
+    assert sig.family == DatabaseFamily.POSTGRESQL
+    assert "unterminated quoted string at or near" in snippet
