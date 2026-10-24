@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- **Cross-Platform Installation & Quick-Start Guide**: Comprehensive documentation update in `README.md` covering step-by-step, copy-pasteable instructions for Windows (PowerShell, execution-policy scoping), Ubuntu Linux (Debian apt dependencies), WSL2 Ubuntu (mounted vs native ext4 filesystem trade-offs, path-with-spaces handling, isolated virtual environments), and macOS (Homebrew, pure-Python verification).
+- **Testing & Limitations Transparency**: Formal clarification of differences between unit tests, integration tests, synthetic validation benchmarks, and live authorized penetration testing, including explicit real-world limitation disclosures.
+- **Troubleshooting & Security Practices**: Detailed troubleshooting resolutions for Python version mismatches, script execution policies, cross-OS venv conflicts, path quoting, and security risks associated with disabling redaction (`--no-redact`).
+
 ### Added
 - **Phase 9 Lab Validation, Detection Reliability & Stabilization**: Dedicated subsystem (`dbshield.validation`) providing deterministic offline laboratory evaluation, synthetic scenario catalogs, confusion matrix calculation, and performance microbenchmarking.
 - **Offline Validation Framework (`LabValidationRunner`, `LabScenario`, `MockHTTPResponse`)**: Repeatable evaluation harness executing simulated HTTP exchanges via `respx` mock routing without external network transmissions.
