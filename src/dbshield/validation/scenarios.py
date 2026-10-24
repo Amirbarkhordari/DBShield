@@ -6,6 +6,10 @@ execution safety budgets, and verification consistency.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 from dbshield.validation.models import (
     ExpectedClassification,
     ExpectedOutcome,
@@ -670,3 +674,28 @@ def load_standard_scenarios() -> list[LabScenario]:
     )
 
     return scenarios
+
+
+def load_scenarios_from_file(file_path: str | Path) -> list[LabScenario]:
+    """Load lab validation scenarios from an external JSON file.
+
+    The file must contain a JSON array of scenario definitions or an object with a 'scenarios' list.
+    """
+    path = Path(file_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Scenario file '{file_path}' does not exist.")
+
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    raw_list: list[dict[str, Any]]
+    if isinstance(data, list):
+        raw_list = data
+    elif isinstance(data, dict) and "scenarios" in data and isinstance(data["scenarios"], list):
+        raw_list = data["scenarios"]
+    else:
+        raise ValueError(
+            f"Scenario file '{file_path}' must contain a JSON array of scenarios or a 'scenarios' field."
+        )
+
+    return [LabScenario.model_validate(item) for item in raw_list]

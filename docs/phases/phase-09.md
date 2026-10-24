@@ -136,14 +136,14 @@ Deterministic microbenchmarks executed via `PerformanceProfiler` on Windows 11 /
 
 | Quality Gate | Command | Result |
 | :--- | :--- | :--- |
-| **Test Suite** | `python -m pytest tests -q` | **426 passed** in 44.11s (0 failed, 0 errors) |
-| **Overall Project Coverage** | `python -m pytest --cov=src/dbshield tests` | **86% overall statement coverage** (5,513 statements) |
+| **Test Suite** | `python -m pytest tests -q` | **441 passed** in 50.75s (0 failed, 0 errors) |
+| **Overall Project Coverage** | `python -m pytest --cov=src/dbshield tests` | **86% overall statement coverage** (5,546 statements) |
 | **Validation Models Coverage** | `pytest --cov=src/dbshield/validation/models` | **100% statement coverage** |
 | **Validation Scenarios Coverage**| `pytest --cov=src/dbshield/validation/scenarios` | **100% statement coverage** |
 | **Validation Profiler Coverage** | `pytest --cov=src/dbshield/validation/profiler` | **100% statement coverage** |
-| **Validation Runner Coverage** | `pytest --cov=src/dbshield/validation/runner` | **89% statement coverage** |
+| **Validation Runner Coverage** | `pytest --cov=src/dbshield/validation/runner` | **88% statement coverage** |
 | **Ruff Lint** | `python -m ruff check src tests` | **All checks passed!** |
-| **Ruff Formatting** | `python -m ruff format --check src tests` | **131 files already formatted** |
+| **Ruff Formatting** | `python -m ruff format --check src tests` | **132 files already formatted** |
 | **Mypy Type Checking** | `python -m mypy src` | **Success: no issues found in 72 source files** |
 | **CLI Validation Suite** | `python -m dbshield validate --suite all --quiet` | **20 scenarios executed, 20 passed (100%)** |
 | **CLI Profiler Execution** | `python -m dbshield validate --profile --quiet` | **Benchmarks executed and rendered cleanly** |
@@ -152,17 +152,19 @@ Deterministic microbenchmarks executed via `PerformanceProfiler` on Windows 11 /
 
 ## 8. Summary of Deliverables
 
-1. `src/dbshield/validation/models.py`: Scenario categories, expectations, mock response definitions, confusion matrix, and reporting models.
-2. `src/dbshield/validation/scenarios.py`: Canonical 20-scenario laboratory validation catalog.
-3. `src/dbshield/validation/runner.py`: Deterministic offline execution runner using `respx` mock routing and metric computation.
+1. `src/dbshield/validation/models.py`: Scenario categories, expectations, mock response definitions, confusion matrix, and reporting models with CLI shorthand validators.
+2. `src/dbshield/validation/scenarios.py`: Canonical 20-scenario laboratory validation catalog and external fixture loader (`load_scenarios_from_file`).
+3. `src/dbshield/validation/runner.py`: Deterministic offline execution runner using `respx` mock routing, robust exception handling, and non-double-counted metric computation.
 4. `src/dbshield/validation/profiler.py`: Performance microbenchmarks for payloads, signatures, differential comparisons, correlation, and exporters.
 5. `src/dbshield/validation/__init__.py`: Package export interface.
-6. `src/dbshield/cli.py`: Integrated `dbshield validate` command (`--suite`, `--tag`, `--format`, `--output`, `--overwrite`, `--profile`, `--quiet`).
+6. `src/dbshield/cli.py`: Integrated `dbshield validate` command (`--suite`, `--tag`, `--format`, `--output`, `--overwrite`, `--profile`, `--quiet`, `--input`).
 7. `src/dbshield/sqli/signatures.py`: Enhanced PostgreSQL syntax error regex pattern to match unterminated quote syntax errors.
-8. `tests/unit/test_validation_models.py`: Unit tests for validation models and confusion matrix.
-9. `tests/unit/test_validation_scenarios.py`: Unit tests for scenario catalog loading and tag filtering.
-10. `tests/unit/test_validation_runner.py`: Unit tests for offline mock execution and metric evaluation.
-11. `tests/unit/test_validation_profiler.py`: Unit tests for microbenchmark execution and resource tracking.
-12. `tests/integration/test_cli_validate.py`: Integration tests for CLI command execution, formatting, and file export.
-13. `tests/unit/test_sqli_signatures.py`: Regression test for PostgreSQL unterminated quote detection.
-14. Documentation updates: `docs/phases/phase-09.md`, `docs/architecture.md`, `docs/roadmap.md`, `CHANGELOG.md`, `README.md`.
+8. `tests/fixtures/sample_lab_scenarios.json`: External JSON fixture file demonstrating custom lab scenario definitions.
+9. `tests/unit/test_validation_models.py`: Unit tests for validation models and confusion matrix.
+10. `tests/unit/test_validation_scenarios.py`: Unit tests for scenario catalog loading and tag filtering.
+11. `tests/unit/test_validation_runner.py`: Unit tests for offline mock execution and metric evaluation.
+12. `tests/unit/test_validation_profiler.py`: Unit tests for microbenchmark execution and resource tracking.
+13. `tests/unit/test_validation_edge_cases.py`: Unit tests covering empty suites, malformed responses, Unicode inputs, truncated JSON, repeated parameters, nested arrays, and unexpected exceptions.
+14. `tests/integration/test_cli_validate.py`: Integration tests for CLI command execution, formatting, external scenario file loading, and export.
+15. `tests/unit/test_sqli_signatures.py`: Regression test for PostgreSQL unterminated quote detection.
+16. Documentation updates: `docs/phases/phase-09.md`, `docs/architecture.md`, `docs/roadmap.md`, `CHANGELOG.md`, `README.md`.

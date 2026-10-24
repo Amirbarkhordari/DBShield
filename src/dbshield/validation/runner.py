@@ -129,52 +129,58 @@ class LabValidationRunner:
         actual_evidence_count: int = 0
         actual_verification_status: str | None = None
 
-        with respx.mock(assert_all_called=False) as router:
-            self._setup_respx_mocks(router, scenario)
-            http_client = SafeHTTPClient(scope_manager=scope)
+        try:
+            with respx.mock(assert_all_called=False) as router:
+                self._setup_respx_mocks(router, scenario)
+                http_client = SafeHTTPClient(scope_manager=scope)
 
-            # Route by scenario category
-            if scenario.category == ScenarioCategory.SQL_INJECTION:
-                engine = SQLiEngine(scope_manager=scope, http_client=http_client)
-                scan_res = engine.scan(
-                    target_url=scenario.target_url,
-                    method=scenario.http_method,
-                    data=scenario.data,
-                    json_data=scenario.json_data,
-                    selected_param=scenario.parameter_name,
-                )
-                actual_status, actual_technique, actual_family, actual_evidence_count = (
-                    self._extract_sqli_results(scan_res)
-                )
-
-            elif scenario.category == ScenarioCategory.NOSQL_INJECTION:
-                nosql_engine = NoSQLiEngine(scope_manager=scope, http_client=http_client)
-                nosql_res = nosql_engine.scan(
-                    target_url=scenario.target_url,
-                    method=scenario.http_method,
-                    data=scenario.data,
-                    json_data=scenario.json_data,
-                    selected_param=scenario.parameter_name,
-                )
-                actual_status, actual_technique, actual_family, actual_evidence_count = (
-                    self._extract_nosqli_results(nosql_res)
-                )
-
-            elif scenario.category == ScenarioCategory.SAFETY_BUDGET:
-                if scenario.scenario_id == "SAFETY-INELIGIBLE-PARAM":
+                # Route by scenario category
+                if scenario.category == ScenarioCategory.SQL_INJECTION:
                     engine = SQLiEngine(scope_manager=scope, http_client=http_client)
-                    target = Target.from_url(scenario.target_url)
-                    params = engine.extract_parameters(
-                        target=target,
+                    scan_res = engine.scan(
+                        target_url=scenario.target_url,
                         method=scenario.http_method,
                         data=scenario.data,
                         json_data=scenario.json_data,
+                        selected_param=scenario.parameter_name,
                     )
-                    param_obj = next((p for p in params if p.name == scenario.parameter_name), None)
-                    if param_obj is not None and not param_obj.is_eligible:
-                        actual_status = "ineligible_skipped"
-                    else:
-                        actual_status = "eligible_tested"
+                    actual_status, actual_technique, actual_family, actual_evidence_count = (
+                        self._extract_sqli_results(scan_res)
+                    )
+
+                elif scenario.category == ScenarioCategory.NOSQL_INJECTION:
+                    nosql_engine = NoSQLiEngine(scope_manager=scope, http_client=http_client)
+                    nosql_res = nosql_engine.scan(
+                        target_url=scenario.target_url,
+                        method=scenario.http_method,
+                        data=scenario.data,
+                        json_data=scenario.json_data,
+                        selected_param=scenario.parameter_name,
+                    )
+                    actual_status, actual_technique, actual_family, actual_evidence_count = (
+                        self._extract_nosqli_results(nosql_res)
+                    )
+
+                elif scenario.category == ScenarioCategory.SAFETY_BUDGET:
+                    if scenario.scenario_id == "SAFETY-INELIGIBLE-PARAM":
+                        engine = SQLiEngine(scope_manager=scope, http_client=http_client)
+                        target = Target.from_url(scenario.target_url)
+                        params = engine.extract_parameters(
+                            target=target,
+                            method=scenario.http_method,
+                            data=scenario.data,
+                            json_data=scenario.json_data,
+                        )
+                        param_obj = next(
+                            (p for p in params if p.name == scenario.parameter_name), None
+                        )
+                        if param_obj is not None and not param_obj.is_eligible:
+                            actual_status = "ineligible_skipped"
+                        else:
+                            actual_status = "eligible_tested"
+        except Exception as exc:
+            discrepancies.append(f"Unexpected execution error: {type(exc).__name__}: {exc}")
+            actual_status = "unexpected_error"
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
@@ -310,9 +316,15 @@ class LabValidationRunner:
                     tn += 1
                 else:
                     fp += 1
-            elif exp_cls == ExpectedClassification.AMBIGUOUS_INCONCLUSIVE:
+            elif (
+                exp_cls == ExpectedClassification.AMBIGUOUS_INCONCLUSIVE
+                and res.outcome != ScenarioOutcome.INCONCLUSIVE
+            ):
                 inconclusive_cnt += 1
-            elif exp_cls == ExpectedClassification.BLOCKED_OR_ERROR:
+            elif (
+                exp_cls == ExpectedClassification.BLOCKED_OR_ERROR
+                and res.outcome != ScenarioOutcome.SKIPPED
+            ):
                 skipped_cnt += 1
 
         # Calculate precision, recall, F1, accuracy

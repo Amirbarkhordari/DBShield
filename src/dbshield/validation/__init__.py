@@ -26,6 +26,7 @@ from dbshield.validation.runner import (
     LabValidationRunner,
 )
 from dbshield.validation.scenarios import (
+    load_scenarios_from_file,
     load_standard_scenarios,
 )
 
@@ -44,5 +45,6 @@ __all__ = [
     "ScenarioExecutionResult",
     "ScenarioOutcome",
     "ValidationReport",
+    "load_scenarios_from_file",
     "load_standard_scenarios",
 ]

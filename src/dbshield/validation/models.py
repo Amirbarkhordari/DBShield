@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ScenarioCategory(StrEnum):
@@ -118,6 +118,22 @@ class LabScenario(BaseModel):
     category: ScenarioCategory = Field(
         description="Functional category for this scenario.",
     )
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _normalize_category(cls, val: Any) -> Any:
+        if isinstance(val, str):
+            clean = val.lower().strip()
+            aliases = {
+                "sqli": ScenarioCategory.SQL_INJECTION,
+                "nosqli": ScenarioCategory.NOSQL_INJECTION,
+                "safety": ScenarioCategory.SAFETY_BUDGET,
+                "verification": ScenarioCategory.VERIFICATION_CONSISTENCY,
+            }
+            if clean in aliases:
+                return aliases[clean]
+        return val
+
     target_url: str = Field(
         description="Target endpoint URL to be evaluated.",
     )

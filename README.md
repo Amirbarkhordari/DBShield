@@ -6,7 +6,7 @@
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
-[![Tests: Pytest](https://img.shields.io/badge/tests-426%20passed-brightgreen.svg)](#)
+[![Tests: Pytest](https://img.shields.io/badge/tests-441%20passed-brightgreen.svg)](#)
 
 ---
 
@@ -593,7 +593,7 @@ Configuration is managed via environment variables or a local `.env` file (see `
 
 ## Development and Testing
 
-Execute the test suite (426 unit and integration tests):
+Execute the test suite (441 unit and integration tests):
 ```bash
 pytest
 ```

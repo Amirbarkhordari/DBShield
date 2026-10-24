@@ -116,3 +116,30 @@ def test_cli_validate_invalid_format() -> None:
     result = runner.invoke(app, ["validate", "--format", "xml"])
     assert result.exit_code == 2
     assert "Invalid format" in result.stderr
+
+
+def test_cli_validate_custom_input_file() -> None:
+    result = runner.invoke(
+        app,
+        ["validate", "--input", "tests/fixtures/sample_lab_scenarios.json", "--quiet"],
+    )
+    assert result.exit_code == 0
+    assert "CUSTOM-FIXTURE-SQLI" in result.stdout
+    assert "CUSTOM-FIXTURE-CLEAN" in result.stdout
+    assert "Total Scenarios:     2" in result.stdout
+    assert "Passed:              2" in result.stdout
+
+
+def test_cli_validate_custom_input_file_not_found() -> None:
+    result = runner.invoke(app, ["validate", "--input", "tests/fixtures/non_existent.json"])
+    assert result.exit_code == 1
+    assert "does not exist" in result.stderr
+
+
+def test_cli_validate_custom_input_file_invalid_json(tmp_path: Path) -> None:
+    broken_file = tmp_path / "broken.json"
+    broken_file.write_text("{not-valid-json", encoding="utf-8")
+
+    result = runner.invoke(app, ["validate", "--input", str(broken_file)])
+    assert result.exit_code == 2
+    assert "Failed to parse scenario file" in result.stderr

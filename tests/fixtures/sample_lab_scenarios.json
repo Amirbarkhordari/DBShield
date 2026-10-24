@@ -1,0 +1,58 @@
+[
+  {
+    "scenario_id": "CUSTOM-FIXTURE-SQLI",
+    "name": "Custom External SQLi Fixture",
+    "description": "Validates loading custom scenario from an external JSON file.",
+    "category": "sqli",
+    "target_url": "http://lab.local/catalog?item=42",
+    "http_method": "GET",
+    "parameter_name": "item",
+    "parameter_location": "query",
+    "mock_responses": [
+      {
+        "url_pattern": "http://lab.local/catalog?item=42",
+        "status_code": 200,
+        "body": "<html><body>Catalog Product 42</body></html>",
+        "is_prefix": false
+      },
+      {
+        "url_pattern": "42'",
+        "status_code": 500,
+        "body": "<html><body>Server Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version near ''' at line 1</body></html>",
+        "is_prefix": false
+      }
+    ],
+    "expected": {
+      "classification": "true_positive",
+      "status": "potential_indicator",
+      "technique": "error_based",
+      "family": "mysql",
+      "min_evidence_count": 1
+    },
+    "tags": ["custom", "sqli", "external_fixture"]
+  },
+  {
+    "scenario_id": "CUSTOM-FIXTURE-CLEAN",
+    "name": "Custom External Clean Fixture",
+    "description": "Validates clean application endpoint from external JSON file.",
+    "category": "sqli",
+    "target_url": "http://lab.local/about",
+    "http_method": "GET",
+    "parameter_name": "page",
+    "parameter_location": "query",
+    "mock_responses": [
+      {
+        "url_pattern": "http://lab.local/about",
+        "status_code": 200,
+        "body": "<html><body>About Us Page</body></html>",
+        "is_prefix": true
+      }
+    ],
+    "expected": {
+      "classification": "true_negative",
+      "status": "no_indicator",
+      "min_evidence_count": 0
+    },
+    "tags": ["custom", "clean", "external_fixture"]
+  }
+]

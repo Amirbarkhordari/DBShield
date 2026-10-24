@@ -62,10 +62,12 @@ from dbshield.scope.manager import ScopeManager
 from dbshield.sqli.engine import SQLiEngine
 from dbshield.sqli.models import ParameterLocation, SQLiScanResult
 from dbshield.validation import (
+    LabScenario,
     LabValidationRunner,
     PerformanceProfiler,
     ScenarioCategory,
     ValidationReport,
+    load_scenarios_from_file,
 )
 from dbshield.verification import (
     VerificationEngine,
@@ -3109,6 +3111,12 @@ def _format_validation_terminal(
 
 @app.command(name="validate")
 def validate_cmd(
+    input_file: Path | None = typer.Option(
+        None,
+        "--input",
+        "-i",
+        help="Optional path to custom JSON file containing scenario definitions.",
+    ),
     suite: str = typer.Option(
         "all",
         "--suite",
@@ -3152,6 +3160,25 @@ def validate_cmd(
     ),
 ) -> None:
     """Execute deterministic offline validation scenarios and reliability benchmarks (Phase 9)."""
+    custom_scenarios: list[LabScenario] | None = None
+    if input_file is not None:
+        if not input_file.is_file():
+            print_error(
+                f"Custom scenario file '{input_file}' does not exist.",
+                cause="Input scenario file path is invalid or unreadable.",
+                remedy="Check the file path and ensure it points to an existing JSON file.",
+            )
+            raise typer.Exit(code=1)
+        try:
+            custom_scenarios = load_scenarios_from_file(input_file)
+        except Exception as exc:
+            print_error(
+                f"Failed to parse scenario file '{input_file}'.",
+                cause=str(exc),
+                remedy="Ensure the file contains valid JSON matching LabScenario schema.",
+            )
+            raise typer.Exit(code=2) from exc
+
     suite_clean = suite.lower().strip()
     valid_suites = {"all", "sqli", "nosqli", "safety"}
     if suite_clean not in valid_suites:
@@ -3191,11 +3218,13 @@ def validate_cmd(
         category_filter = ScenarioCategory.SAFETY_BUDGET
 
     if not quiet:
-        print_info(f"Executing Phase 9 validation suite '{suite_clean}' (tag: {tag or 'any'})...")
+        source_desc = f"file '{input_file}'" if input_file else f"suite '{suite_clean}'"
+        print_info(f"Executing Phase 9 validation from {source_desc} (tag: {tag or 'any'})...")
 
     runner = LabValidationRunner()
     report = runner.run_suite(
-        category_filter=category_filter,
+        scenarios=custom_scenarios,
+        category_filter=category_filter if custom_scenarios is None else None,
         tag_filter=tag,
     )
 
